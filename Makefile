@@ -54,6 +54,6 @@ release:
 	git push origin $(TAG)
 	gh release create $(TAG) $(ZIP) \
 		--title "TiBillet pour Dolibarr $(VERSION)" \
-		--notes "Installation : dans Dolibarr, Configuration → Modules/Applications → Déployer/Installer un module externe → envoyer le fichier module_tibillet-$(VERSION).zip ci-dessous. Mise à jour : même chose, puis désactiver et réactiver le module. Guide pas à pas : https://github.com/TiBillet/tibillet-dolibarr/blob/main/docs/02-relier-tibillet-a-dolibarr.md"
+		--notes "Installation : dans Dolibarr, Configuration → Modules/Applications → Déployer/Installer un module externe → envoyer le fichier module_tibillet-$(VERSION).zip ci-dessous. Mise à jour : même chose, puis désactiver et réactiver le module. Guide pas à pas : https://github.com/TiBillet/tibillet-dolibarr/blob/main/docs/00-installer-le-module.md"
 	@echo ""
 	@echo "Release $(TAG) publiée."

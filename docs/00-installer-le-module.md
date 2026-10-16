@@ -106,7 +106,7 @@ exercice ouvert, Dolibarr refuse d'écrire dans son grand livre.
 1. Ouvrez la page des versions :
    [github.com/TiBillet/tibillet-dolibarr/releases](https://github.com/TiBillet/tibillet-dolibarr/releases).
 2. Dans la version la plus récente, téléchargez le fichier **module_tibillet-….zip**
-   (par exemple module_tibillet-0.1.0.zip).
+   (par exemple module_tibillet-0.2.0.zip).
 
 ⚠️ Ne prenez pas « Source code (zip) » : Dolibarr ne saurait pas l'installer. Le bon
 fichier commence par **module_tibillet**.
