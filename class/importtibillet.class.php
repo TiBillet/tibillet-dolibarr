@@ -86,6 +86,14 @@ class ImportTiBillet
 	const NATURE_DES_JOURNAUX = 1;
 
 	/**
+	 * Les deux modes du module (constante TIBILLET_MODE). Un seul a la fois : sinon la
+	 * meme vente entre deux fois dans la comptabilite (par l'ecriture ET par la facture).
+	 * / The module's two modes. Only one at a time, or a sale would be counted twice.
+	 */
+	const MODE_ECRITURES = 'ecritures';
+	const MODE_VENTES = 'ventes';
+
+	/**
 	 * @param DoliDB $db Base de donnees / Database handler
 	 */
 	public function __construct($db)
@@ -100,7 +108,130 @@ class ImportTiBillet
 	// ------------------------------------------------------------------
 
 	/**
-	 * Un passage complet. Appelee par la tache planifiee et par « Importer maintenant ».
+	 * LA tache de nuit : selon le mode, importe les clotures (mode « ecritures ») OU
+	 * synchronise le catalogue puis importe les ventes (mode « articles et ventes »).
+	 * Une seule tache, donc une seule heure a regler, et un ordre garanti.
+	 * / THE nightly job: imports closures OR syncs the catalogue then the sales.
+	 *
+	 * @return int 0 si tout va bien, -1 sinon (voir $this->error) / 0 if OK, -1 if not
+	 */
+	public function passageDeLaNuit()
+	{
+		if (self::modeChoisi() === self::MODE_VENTES) {
+			// Le catalogue d'abord : un tarif vendu doit exister comme produit. Les
+			// ventes seulement si le catalogue est passe sans erreur.
+			// / The catalogue first; sales only if it ran without error.
+			dol_include_once('/tibillet/class/catalogue.class.php');
+			$catalogue = new CatalogueTiBillet($this->db);
+			$resultat = $catalogue->synchroniserLeCatalogue();
+			$this->output = $catalogue->output;
+			$this->error = $catalogue->error;
+			if ($resultat < 0) {
+				return $resultat;
+			}
+			dol_include_once('/tibillet/class/ventes.class.php');
+			$ventes = new VentesTiBillet($this->db);
+			$resultat = $ventes->importerLesVentes();
+			$this->output .= "\n".$ventes->output;
+			$this->error = $ventes->error;
+			return $resultat;
+		}
+		return $this->importerLesClotures();
+	}
+
+	/**
+	 * L'heure de la tache de nuit (constante TIBILLET_HEURE, « HH:MM »), ou 06:00. Le
+	 * module ne lit que des journees deja cloturees, et TiBillet cloture la journee
+	 * tout seul deux heures apres l'heure de fermeture du lieu (vers 4 h pour une
+	 * fermeture a 2 h) : a 6 h, la soiree de la veille est prise le matin meme.
+	 * / The nightly job time, or 06:00: after TiBillet's automatic day closure.
+	 *
+	 * @return string
+	 */
+	public static function heureDeLaTache()
+	{
+		$heure = getDolGlobalString('TIBILLET_HEURE');
+		return self::heureEstValide($heure) ? $heure : '06:00';
+	}
+
+	/**
+	 * Vrai pour une heure « HH:MM » de 00:00 a 23:59. / True for a valid "HH:MM".
+	 *
+	 * @param string $heure
+	 * @return bool
+	 */
+	public static function heureEstValide($heure)
+	{
+		return (bool) preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9]$/', (string) $heure);
+	}
+
+	/**
+	 * La prochaine fois qu'il sera « HH:MM » : aujourd'hui si c'est encore a venir,
+	 * sinon demain. L'heure est lue dans le fuseau de la personne connectee (celui ou
+	 * la page affiche le prochain passage), sinon dans celui du serveur (cron, essai).
+	 * / The next "HH:MM", read in the logged-in person's time zone, else the server's.
+	 *
+	 * @param string $heure « HH:MM »
+	 * @return int timestamp
+	 */
+	public static function prochaineOccurrence($heure)
+	{
+		$fuseau = empty($_SESSION['dol_tz_string']) ? date_default_timezone_get() : $_SESSION['dol_tz_string'];
+
+		list($heures, $minutes) = explode(':', $heure);
+		$maintenant = dol_now();
+		$aujourd_hui = dol_getdate($maintenant, false, $fuseau);
+		$moment = dol_mktime((int) $heures, (int) $minutes, 0, $aujourd_hui['mon'], $aujourd_hui['mday'], $aujourd_hui['year'], 'tz,'.$fuseau);
+		if ($moment <= $maintenant) {
+			$moment = dol_time_plus_duree($moment, 1, 'd');
+		}
+		return $moment;
+	}
+
+	/**
+	 * Recale la tache de nuit sur la prochaine occurrence de son heure. Dolibarr garde
+	 * ensuite cette heure d'un passage a l'autre (+ 24 h).
+	 * / Moves the nightly job to the next occurrence of its time.
+	 *
+	 * @param User $user Auteur
+	 * @return int 1 si recalee, -1 sinon (voir $this->error)
+	 */
+	public function recalerLaTacheDeNuit($user)
+	{
+		global $langs;
+		require_once DOL_DOCUMENT_ROOT.'/cron/class/cronjob.class.php';
+
+		$tache = new Cronjob($this->db);
+		if ($tache->fetch(0, 'ImportTiBillet', 'passageDeLaNuit') <= 0) {
+			$this->error = $langs->transnoentities('TiBilletTacheIntrouvable');
+			return -1;
+		}
+		$tache->datenextrun = self::prochaineOccurrence(self::heureDeLaTache());
+		if ($tache->update($user) < 0) {
+			$this->error = $langs->transnoentities('TiBilletErreurDolibarr', $tache->error);
+			return -1;
+		}
+		return 1;
+	}
+
+	/**
+	 * La date du prochain passage de la tache de nuit, ou null.
+	 * / Next run of the nightly job, or null.
+	 *
+	 * @return int|null
+	 */
+	public function prochainPassage()
+	{
+		require_once DOL_DOCUMENT_ROOT.'/cron/class/cronjob.class.php';
+		$tache = new Cronjob($this->db);
+		if ($tache->fetch(0, 'ImportTiBillet', 'passageDeLaNuit') <= 0) {
+			return null;
+		}
+		return $tache->datenextrun;
+	}
+
+	/**
+	 * Un passage complet. Appelee par la tache de nuit et par « Importer maintenant ».
 	 * / One full run. Called by the scheduled job and the "Import now" button.
 	 *
 	 * @return int 0 si tout va bien (ou rien a faire), -1 si le passage s'est arrete
@@ -110,6 +241,13 @@ class ImportTiBillet
 	{
 		global $user, $langs;
 		$langs->loadLangs(array('tibillet@tibillet'));
+
+		// En mode « articles et ventes », les clotures n'entrent pas dans le grand livre.
+		// / In "items and sales" mode, closures never enter the ledger.
+		if (self::modeChoisi() === self::MODE_VENTES) {
+			$this->output = $langs->transnoentities('TiBilletModeVentesRienAImporter');
+			return 0;
+		}
 
 		if (!$this->moduleEstConfigure()) {
 			$this->output = $langs->transnoentities('TiBilletNonConfigure');
@@ -164,7 +302,12 @@ class ImportTiBillet
 		global $user, $langs;
 		$langs->loadLangs(array('tibillet@tibillet'));
 
-		$sql = "SELECT rowid, cloture_uuid, numero, pieces FROM ".$this->db->prefix()."tibillet_cloture_importee";
+		if (self::modeChoisi() === self::MODE_VENTES) {
+			$this->error = $langs->transnoentities('TiBilletModeVentesPasDeReimport');
+			return -1;
+		}
+
+		$sql = "SELECT rowid, cloture_uuid, numero, pieces, mode FROM ".$this->db->prefix()."tibillet_cloture_importee";
 		$sql .= " WHERE rowid = ".((int) $rowid)." AND entity = ".((int) $this->entity);
 		$resql = $this->db->query($sql);
 		$ligne = $resql ? $this->db->fetch_object($resql) : null;
@@ -172,9 +315,72 @@ class ImportTiBillet
 			$this->error = $langs->transnoentities('TiBilletClotureInconnue');
 			return -1;
 		}
+		// Une cloture importee en mode « ventes » a des factures : ses ecritures s'y
+		// ajouteraient (double compta). Elle ne se reimporte jamais.
+		// / A closure imported in sales mode has invoices: never re-imported.
+		if ($ligne->mode === self::MODE_VENTES) {
+			$this->error = $langs->transnoentities('TiBilletClotureEnModeVentes');
+			return -1;
+		}
 
 		$resultat = $this->importerUneCloture($ligne->cloture_uuid, $user, $ligne);
 		return ($resultat < 0) ? -1 : 1;
+	}
+
+	/**
+	 * Le mode choisi sur la page du module. Pas encore choisi : voir modeParDefaut().
+	 * / The chosen mode; not chosen yet: see modeParDefaut().
+	 *
+	 * @return string self::MODE_ECRITURES ou self::MODE_VENTES
+	 */
+	public static function modeChoisi()
+	{
+		global $db;
+
+		$mode_enregistre = getDolGlobalString('TIBILLET_MODE');
+		if ($mode_enregistre === self::MODE_VENTES || $mode_enregistre === self::MODE_ECRITURES) {
+			return $mode_enregistre;
+		}
+		// Seules les clotures du grand livre comptent : celles du mode « ventes » ne
+		// doivent pas faire basculer un lieu neuf en « ecritures ».
+		// / Only ledger closures count, not those imported as sales.
+		$import = new self($db);
+		return self::modeParDefaut($import->nombreDeCloturesImportees(self::MODE_ECRITURES));
+	}
+
+	/**
+	 * Le mode quand aucun n'est enregistre : « articles et ventes » pour une
+	 * installation neuve ; « ecritures » si des clotures sont deja dans le grand livre,
+	 * pour qu'un lieu qui utilise ce mode (installe avant le choix du mode) ne bascule
+	 * jamais en silence.
+	 * / Default mode: sales for a new install, entries when closures are already imported.
+	 *
+	 * @param int $nombre_de_clotures_importees
+	 * @return string self::MODE_ECRITURES ou self::MODE_VENTES
+	 */
+	public static function modeParDefaut($nombre_de_clotures_importees)
+	{
+		if ((int) $nombre_de_clotures_importees > 0) {
+			return self::MODE_ECRITURES;
+		}
+		return self::MODE_VENTES;
+	}
+
+	/**
+	 * Le nombre de clotures deja ecrites dans le grand livre (sert a l'alerte quand on
+	 * change de mode). / Number of closures already in the ledger (mode change alert).
+	 *
+	 * @return int
+	 */
+	public function nombreDeCloturesImportees($mode = '')
+	{
+		$sql = "SELECT COUNT(*) as nb FROM ".$this->db->prefix()."tibillet_cloture_importee";
+		$sql .= " WHERE entity = ".((int) $this->entity);
+		if ($mode !== '') {
+			$sql .= " AND mode = '".$this->db->escape($mode)."'";
+		}
+		$resql = $this->db->query($sql);
+		return $resql ? (int) $this->db->fetch_object($resql)->nb : 0;
 	}
 
 	/**
@@ -195,7 +401,32 @@ class ImportTiBillet
 		if ($reponse['code'] != 200) {
 			return array(false, $this->phraseDuRefus($reponse));
 		}
-		return array(true, $langs->transnoentities('TiBilletConnexionOk', count($reponse['donnees']['results'])));
+		$phrase = $langs->transnoentities('TiBilletConnexionOk', count($reponse['donnees']['results']));
+
+		// Mode « articles et ventes » : la cle doit aussi avoir le droit « Produits ».
+		// / Items and sales mode: the key also needs the "Products" right.
+		if (self::modeChoisi() === self::MODE_VENTES) {
+			$reponse_du_catalogue = $this->appelerTiBillet('/api/v2/products/?accounting=true');
+			if ($reponse_du_catalogue['code'] == 403) {
+				return array(false, $langs->transnoentities('TiBilletCleSansDroitProduits'));
+			}
+			if ($reponse_du_catalogue['code'] != 200) {
+				return array(false, $this->phraseDuRefus($reponse_du_catalogue));
+			}
+			$phrase .= ' '.$langs->transnoentities('TiBilletCatalogueOk', count($reponse_du_catalogue['donnees']['results']));
+
+			// Et le droit « Ventes » : TiBillet verifie le droit AVANT de chercher la
+			// cloture. Un uuid nul donne donc 403 sans le droit, 404 avec.
+			// / And the "sale" right: checked before the closure lookup.
+			$reponse_des_ventes = $this->appelerTiBillet('/api/v2/closures/00000000-0000-0000-0000-000000000000/sales/');
+			if ($reponse_des_ventes['code'] == 403) {
+				return array(false, $langs->transnoentities('TiBilletCleSansDroitVentes'));
+			}
+			if ($reponse_des_ventes['code'] != 404 && $reponse_des_ventes['code'] != 200) {
+				return array(false, $this->phraseDuRefus($reponse_des_ventes));
+			}
+		}
+		return array(true, $phrase);
 	}
 
 	// ------------------------------------------------------------------
@@ -222,6 +453,18 @@ class ImportTiBillet
 		// / The URL is rebuilt from the uuid: the key only goes to TIBILLET_URL.
 		if (!preg_match('/^[0-9a-f-]{36}$/i', $uuid)) {
 			$this->error = $langs->transnoentities('TiBilletReponseIllisible');
+			return -1;
+		}
+		// Une cloture dont une partie des ventes est deja en factures (un passage du
+		// mode « ventes » arrete par une vente refusee) ne va jamais dans le grand
+		// livre : ces ventes y seraient comptees deux fois.
+		// / A closure partly copied as invoices never goes into the ledger.
+		$sql = "SELECT COUNT(*) as nb FROM ".$this->db->prefix()."tibillet_vente_importee";
+		$sql .= " WHERE cloture_uuid = '".$this->db->escape($uuid)."' AND entity = ".((int) $this->entity);
+		$resql = $this->db->query($sql);
+		$ligne_des_ventes = $resql ? $this->db->fetch_object($resql) : null;
+		if ($ligne_des_ventes && (int) $ligne_des_ventes->nb > 0) {
+			$this->error = $langs->transnoentities('TiBilletClotureEnPartieEnVentes');
 			return -1;
 		}
 		$reponse = $this->appelerTiBillet('/api/v2/closures/'.$uuid.'/entries/');
@@ -426,17 +669,17 @@ class ImportTiBillet
 	 *
 	 * @return int 1 si OK, -1 sinon
 	 */
-	private function noterLaCloture($uuid, $donnees, $date_des_ecritures, $pieces_ecrites, $ligne_existante)
+	protected function noterLaCloture($uuid, $donnees, $date_des_ecritures, $pieces_ecrites, $ligne_existante, $mode = self::MODE_ECRITURES)
 	{
 		global $langs;
 		$pieces = implode(',', $pieces_ecrites);
 
 		if ($ligne_existante === null) {
 			$sql = "INSERT INTO ".$this->db->prefix()."tibillet_cloture_importee";
-			$sql .= " (entity, cloture_uuid, numero, date_comptable, date_import, pieces) VALUES (";
+			$sql .= " (entity, cloture_uuid, numero, date_comptable, date_import, pieces, mode) VALUES (";
 			$sql .= ((int) $this->entity).", '".$this->db->escape($uuid)."', ".((int) $donnees['number']).", ";
 			$sql .= "'".$this->db->idate($date_des_ecritures)."', '".$this->db->idate(dol_now())."', ";
-			$sql .= "'".$this->db->escape($pieces)."')";
+			$sql .= "'".$this->db->escape($pieces)."', '".$this->db->escape($mode)."')";
 		} else {
 			$sql = "UPDATE ".$this->db->prefix()."tibillet_cloture_importee";
 			$sql .= " SET pieces = '".$this->db->escape($pieces)."', date_import = '".$this->db->idate(dol_now())."'";
@@ -461,7 +704,7 @@ class ImportTiBillet
 	 * @param User $user Auteur
 	 * @return int Nombre de comptes crees, ou -1
 	 */
-	private function creerLesComptesManquants($user)
+	protected function creerLesComptesManquants($user)
 	{
 		global $langs;
 
@@ -534,7 +777,7 @@ class ImportTiBillet
 	 * devient 707), sauf si ACCOUNTING_MANAGE_ZERO est active.
 	 * / Account number the Dolibarr way: trailing zeros removed unless MANAGE_ZERO.
 	 */
-	private function numeroDeCompteDolibarr($numero)
+	protected function numeroDeCompteDolibarr($numero)
 	{
 		$numero = trim((string) $numero);
 		if (getDolGlobalString('ACCOUNTING_MANAGE_ZERO')) {
@@ -585,7 +828,7 @@ class ImportTiBillet
 	 * Le code du plan comptable actif (ex. PCG18-ASSOC), ou '' si aucun.
 	 * / The active chart code, or '' if none.
 	 */
-	private function versionDuPlanActif()
+	protected function versionDuPlanActif()
 	{
 		$sql = "SELECT pcg_version FROM ".$this->db->prefix()."accounting_system";
 		$sql .= " WHERE rowid = ".((int) getDolGlobalInt('CHARTOFACCOUNTS'));
@@ -599,7 +842,7 @@ class ImportTiBillet
 	// ------------------------------------------------------------------
 
 	/** Le plus grand numero TiBillet importe (0 si aucun) / Highest imported number */
-	private function plusGrandNumeroImporte()
+	protected function plusGrandNumeroImporte()
 	{
 		$sql = "SELECT MAX(numero) as plus_grand FROM ".$this->db->prefix()."tibillet_cloture_importee";
 		$sql .= " WHERE entity = ".((int) $this->entity);
@@ -609,7 +852,7 @@ class ImportTiBillet
 	}
 
 	/** Vrai si la cloture est deja dans la table / True if already imported */
-	private function clotureDejaImportee($uuid)
+	protected function clotureDejaImportee($uuid)
 	{
 		$sql = "SELECT rowid FROM ".$this->db->prefix()."tibillet_cloture_importee";
 		$sql .= " WHERE cloture_uuid = '".$this->db->escape($uuid)."' AND entity = ".((int) $this->entity);
@@ -634,7 +877,7 @@ class ImportTiBillet
 	// ------------------------------------------------------------------
 
 	/** Vrai si l'adresse et la cle sont remplies / True if address and key are set */
-	private function moduleEstConfigure()
+	protected function moduleEstConfigure()
 	{
 		return getDolGlobalString('TIBILLET_URL') !== '' && getDolGlobalString('TIBILLET_API_KEY') !== '';
 	}
@@ -644,10 +887,11 @@ class ImportTiBillet
 	 * l'erreur reseau. La cle n'est ecrite dans aucun journal.
 	 * / A GET on TiBillet's API, direct cURL. The key is never logged.
 	 *
-	 * @param string $chemin Le chemin, ex. '/api/v2/accounts/'
-	 * @return array{code: int, donnees: mixed, erreur: string}
+	 * @param string   $chemin            Le chemin, ex. '/api/v2/accounts/'
+	 * @param string[] $en_tetes_en_plus  D'autres en-tetes, ex. 'If-None-Match: "…"'
+	 * @return array{code: int, donnees: mixed, erreur: string, etag: string}
 	 */
-	private function appelerTiBillet($chemin)
+	protected function appelerTiBillet($chemin, $en_tetes_en_plus = array())
 	{
 		global $langs;
 
@@ -655,12 +899,12 @@ class ImportTiBillet
 		$mode_developpement = getDolGlobalInt('TIBILLET_RESEAU_LOCAL') == 1;
 		$morceaux = parse_url($adresse);
 		if (empty($morceaux['scheme']) || empty($morceaux['host'])) {
-			return array('code' => 0, 'donnees' => null, 'erreur' => $langs->transnoentities('TiBilletAdresseInvalide'));
+			return array('code' => 0, 'donnees' => null, 'erreur' => $langs->transnoentities('TiBilletAdresseInvalide'), 'etag' => '');
 		}
 		// En production, la cle ne circule qu'en https.
 		// / In production, the key only travels over https.
 		if (!$mode_developpement && $morceaux['scheme'] !== 'https') {
-			return array('code' => 0, 'donnees' => null, 'erreur' => $langs->transnoentities('TiBilletHttpsObligatoire'));
+			return array('code' => 0, 'donnees' => null, 'erreur' => $langs->transnoentities('TiBilletHttpsObligatoire'), 'etag' => '');
 		}
 
 		$appel = curl_init($adresse);
@@ -669,10 +913,19 @@ class ImportTiBillet
 		curl_setopt($appel, CURLOPT_CONNECTTIMEOUT, 10);
 		curl_setopt($appel, CURLOPT_TIMEOUT, 120);
 		curl_setopt($appel, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS | CURLPROTO_HTTP);
-		curl_setopt($appel, CURLOPT_HTTPHEADER, array(
+		curl_setopt($appel, CURLOPT_HTTPHEADER, array_merge(array(
 			'Authorization: Api-Key '.getDolGlobalString('TIBILLET_API_KEY'),
 			'Accept: application/json',
-		));
+		), $en_tetes_en_plus));
+		// L'en-tete ETag de la reponse (catalogue) : lu au passage, ligne par ligne.
+		// / The response ETag header (catalogue), read line by line.
+		$etag_recu = '';
+		curl_setopt($appel, CURLOPT_HEADERFUNCTION, function ($appel_en_cours, $ligne_d_en_tete) use (&$etag_recu) {
+			if (stripos($ligne_d_en_tete, 'ETag:') === 0) {
+				$etag_recu = trim(substr($ligne_d_en_tete, 5));
+			}
+			return strlen($ligne_d_en_tete);
+		});
 		if ($mode_developpement) {
 			// Dev : curl envoie tout nom en *.localhost vers lui-meme ; on lui donne
 			// l'adresse lue dans /etc/hosts. Certificat de dev non verifie.
@@ -695,7 +948,7 @@ class ImportTiBillet
 		if (is_string($contenu) && $contenu !== '') {
 			$donnees = json_decode($contenu, true);
 		}
-		return array('code' => $code_http, 'donnees' => $donnees, 'erreur' => $erreur_reseau);
+		return array('code' => $code_http, 'donnees' => $donnees, 'erreur' => $erreur_reseau, 'etag' => $etag_recu);
 	}
 
 	/**
@@ -703,7 +956,7 @@ class ImportTiBillet
 	 * existe, sinon le code HTTP ou l'erreur reseau.
 	 * / The sentence for a non-200 response.
 	 */
-	private function phraseDuRefus($reponse)
+	protected function phraseDuRefus($reponse)
 	{
 		global $langs;
 		if ($reponse['code'] == 0) {
@@ -721,7 +974,7 @@ class ImportTiBillet
 	// ------------------------------------------------------------------
 
 	/** 'AAAA-MM-JJ' → timestamp Dolibarr a midi, ou null / ISO date to noon timestamp */
-	private function dateDolibarr($date_iso)
+	protected function dateDolibarr($date_iso)
 	{
 		if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', (string) $date_iso, $morceaux)) {
 			return null;

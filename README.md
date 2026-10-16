@@ -1,63 +1,176 @@
-# Module Dolibarr « TiBillet »
+# TiBillet pour Dolibarr
 
-Chaque nuit, Dolibarr va chercher chez **TiBillet** les clôtures de caisse du lieu
-qu'il n'a pas encore, et range leurs écritures dans son **grand livre**, **non
-validées**. Le comptable relit, puis valide.
+Ce module relie **TiBillet** (billetterie, caisse, adhésions) à **Dolibarr** (logiciel
+de gestion et de comptabilité).
 
-- Une clôture journalière TiBillet = une écriture par journal (un journal par point de
-  vente : BAR, WEB…), déjà calculée et équilibrée par TiBillet (le même contenu que le
-  FEC de TiBillet).
-- Le module crée dans Dolibarr les **comptes** et les **journaux** qui manquent. Il ne
-  modifie jamais un compte existant.
-- Une clôture entre **en entier ou pas du tout**. Elle n'est jamais importée deux fois.
-- Si TiBillet refuse une clôture (un compte manque dans le plan du lieu), l'import
-  s'arrête et le dit ; la nuit suivante, il reprend à la même clôture.
+**Chaque jour** (tâche planifiée, 6 h par défaut), selon le **mode** choisi sur la page du module :
 
-Licence : GPL v3 ou plus (voir `COPYING`). Spec et décisions : dépôt Lespass,
-`TECH_DOC/SESSIONS/COMPTABILITE/CHANTIER-06-connecteurs-comptables/`.
+- **Articles et ventes** (par défaut pour une nouvelle installation) : Dolibarr
+  recopie le **catalogue** de TiBillet (produits, catégories, TVA, compte de vente),
+  puis les **ventes** des journées clôturées, en factures payées. Dolibarr tient alors
+  la comptabilité avec ses propres factures.
+- **Écritures comptables** : Dolibarr va chercher chez TiBillet les journées de vente
+  déjà clôturées. Il range leurs écritures comptables dans son **grand livre**, **non
+  validées**. Votre comptable les relit, puis les valide. Un module déjà utilisé dans ce
+  mode y reste.
 
-## Installer
+**Un seul mode à la fois**, jamais les deux : sinon chaque vente serait comptée deux
+fois. Personne ne recopie rien à la main.
 
-1. Copier ce dossier dans `htdocs/custom/tibillet/` de Dolibarr (ou le monter dans le
-   conteneur), ou installer le zip par « Configuration → Modules → Déployer un module
-   externe ».
-2. Activer le module **Comptabilité (partie double)**, charger un plan comptable, et
-   ouvrir un **exercice comptable** (sans exercice ouvert, Dolibarr refuse toute
-   écriture).
-3. Activer le module **TiBillet**, puis ouvrir ses réglages :
-   - **Adresse du lieu** : `https://monlieu.tibillet.coop` (l'adresse principale, en
-     https) ;
-   - **Clé d'API** : créée dans l'admin TiBillet (Clés d'API), avec **seulement** le
-     droit « Comptabilité (lecture) ». Elle est chiffrée dans la base de Dolibarr et
-     n'est jamais réaffichée ;
-   - **Mode développement** : décoché en production.
-4. « Tester la connexion », puis « Importer maintenant » (ou attendre la nuit).
+📖 **Les guides pas à pas, avec des images :**
+- installer et régler le module (les deux modes) :
+  [Le module TiBillet](docs/00-installer-le-module.md) ;
+- mode « articles et ventes » (par défaut) :
+  [Remontée des ventes et articles](docs/03-articles-et-ventes.md) ;
+- mode « écritures comptables » :
+  [Comptabilité (partie double)](docs/02-relier-tibillet-a-dolibarr.md).
 
-La tâche planifiée « TiBilletImportDesClotures » est active dès l'installation, chaque
-jour à 02:30. **Le cron système de Dolibarr doit tourner** : `cron_run_jobs.php` avec la
-clé `CRON_KEY` **et** un utilisateur (`firstadmin`). Avec l'image Docker officielle :
-variable `DOLI_CRON_USER=firstadmin` sur le conteneur cron, sinon aucune tâche ne tourne.
-La clé `DOLI_CRON_KEY` doit aussi être celle de Configuration → Travaux planifiés
-(constante `CRON_KEY`) : sinon « securitykey … does not match » et rien ne tourne.
+Avant eux, lisez [Un plan comptable](docs/01-un-plan-comptable.md) :
+il explique les mots « compte », « journal », « débit » et « crédit ».
 
-## Réimporter une clôture
+## Ce que fait le module
 
-Page du module → « Réimporter » : retire les écritures de la clôture et les réécrit
-avec le plan comptable actuel de TiBillet. Impossible si une ligne est déjà validée.
+- Une journée de TiBillet (la clôture du soir, le « Z ») devient une écriture par
+  journal : une pour le bar, une pour les ventes en ligne… Ce sont les mêmes écritures
+  que le fichier FEC de TiBillet.
+- S'il manque un compte ou un journal dans Dolibarr, le module le crée. Il ne modifie
+  jamais un compte qui existe déjà.
+- Une journée arrive **en entier, ou pas du tout**. Elle n'arrive **jamais deux fois**.
+- Si TiBillet refuse une journée (un compte manque dans son plan comptable), l'import
+  s'arrête et le dit. La nuit suivante, il reprend au même endroit.
+- Le module ne modifie rien dans TiBillet.
 
-## Essai automatique (instance de TEST seulement : il écrit et efface)
+### En mode « articles et ventes »
+
+- Un **produit Dolibarr par tarif** vendu en euros (« Bière — Pinte »), avec son prix
+  TTC, sa TVA et son compte de vente, tous calculés par TiBillet (les mêmes que dans
+  le FEC). Prix libre : le prix minimum de TiBillet.
+- Les catégories sont rangées sous deux catégories mères : **Caisse TiBillet** (les
+  catégories de caisse) et **Types TiBillet** (billets, adhésions…). Une catégorie que
+  vous posez à la main sur un produit reste.
+- **Rien n'est jamais supprimé** : un tarif archivé passe « hors vente », comme un
+  tarif qui ne peut plus être recopié (plus de compte, plus une vente, plus en euros) ;
+  le résumé du passage le dit. Un produit à vous (sans lien avec TiBillet) n'est jamais
+  touché.
+- Les recharges, virements, retours de consigne et tarifs en jetons **ne sont pas des
+  ventes** : ils ne viennent pas. Un article sans compte (pas de catégorie de caisse
+  reliée à un compte) n'est pas créé : le résumé du passage le dit, avec la phrase de
+  TiBillet.
+- Si rien n'a changé dans TiBillet depuis la veille, rien n'est réécrit, et la page garde
+  le résumé du dernier passage complet.
+- Les noms des catégories de type (« Article de caisse », « Réservation de billets »…)
+  sont en français, quelle que soit la langue de Dolibarr.
+- **Les ventes** des journées clôturées, jamais en temps réel :
+  - une **facture payée par vente** TiBillet (un **avoir** pour un remboursement, relié
+    à la facture d'origine si elle est dans Dolibarr), ses lignes déjà **liées** à leur
+    compte de vente et la TVA à son compte par taux : le comptable n'a rien à lier ;
+  - le **tiers** : l'acheteur, retrouvé par son **e-mail** (créé s'il manque, l'e-mail
+    comme nom), sinon le **client de passage** (comme la caisse TakePOS) ;
+  - une **banque Dolibarr par compte de trésorerie** de TiBillet (caisse, CB, Stripe,
+    monnaie locale…), créée au premier paiement, modifiable sur la page ;
+  - les **recharges** et **vidages** de carte en **virements internes** ; la recharge
+    offerte, les jetons repris et les écarts d'encaissement en **paiements divers** ;
+  - date des factures et des paiements = la date de la journée, comme le FEC.
+  Compte par compte, le résultat est celui du FEC de la journée. Une vente arrive une
+  fois, en entier ; une vente refusée arrête l'import (la page dit pourquoi) et la
+  nuit suivante reprend à cette vente. Un passage importe toutes les ventes, page
+  après page. Si PHP coupe trop tôt sur votre serveur, la constante
+  `TIBILLET_VENTES_PAR_PASSAGE` limite le nombre de ventes par passage ; la suite
+  arrive au passage suivant.
+- **Ce que le module règle lui-même** dans Dolibarr, et dit : comptes généraux client,
+  TVA et virements internes s'ils sont vides, codes de paiement (`VAD`, `TIB`), compte
+  de TVA de chaque taux s'il est vide, banques, client de passage. **Ce qu'il signale
+  seulement** (l'import ne démarre pas) : un module inactif, les options
+  `FAC_FORCE_DATE_VALIDATION`, `INVOICE_CHECK_POSTERIOR_DATE` ou
+  `STOCK_CALCULATE_ON_BILL` allumées, un utilisateur sans droit de créer des factures.
+  « Tester la connexion » montre les deux listes.
+- Une journée importée en factures ne se **réimporte** jamais en écritures.
+- La clé TiBillet doit avoir les droits **« Produits »**, **« Comptabilité
+  (lecture) »** et **« Ventes »** (les ventes publient l'e-mail des acheteurs). En
+  passant dans ce mode, la page active les modules Produits, Services, Catégories,
+  Tiers, Factures et Banques de Dolibarr.
+
+## Installer, en 6 étapes
+
+1. **Dans TiBillet** : Paramètres → Clés API → ajouter une clé, avec **seulement**
+   « Comptabilité (lecture) ». Copiez la clé : elle ne s'affiche qu'une fois.
+2. **Dans Dolibarr (version 24 ou plus)** : activez le module « Comptabilité (partie
+   double) », chargez un plan comptable (par exemple FR - PCG18-ASSOC pour une
+   association) et ouvrez un **exercice comptable**.
+3. Téléchargez **`module_tibillet-<version>.zip`** sur la
+   [page des versions](https://github.com/TiBillet/tibillet-dolibarr/releases).
+   ⚠️ Pas « Source code (zip) » : Dolibarr ne saurait pas l'installer.
+4. Dans Dolibarr : Configuration → Modules / Applications → **Déployer/Installer un
+   module externe** → envoyez le zip. Puis activez le module **TiBillet**. Dolibarr
+   active aussi « Travaux planifiés ».
+5. Roue dentée du module : l'**adresse** de votre lieu (`https://monlieu.tibillet.coop`)
+   et la **clé**. Laissez « Mode développement » décoché. Enregistrez, puis
+   **Tester la connexion**.
+6. **Importer maintenant**, puis comparez la balance de Dolibarr avec celle de TiBillet
+   (Plan comptable → onglet Gérer) : les montants doivent être les mêmes.
+
+⚠️ **La tâche de nuit** (« Tâche de nuit TiBillet », chaque jour à l'heure réglée sur la
+page du module, dans le fuseau horaire de la personne qui l'enregistre, 6 h par
+défaut, à 5 minutes près) ne lit que les journées **déjà clôturées** : TiBillet clôture
+la journée tout seul deux heures après l'heure de fermeture du lieu. Réglez-la après
+cette clôture, sinon la soirée n'arrive que le lendemain. Elle ne tourne
+que si le serveur lance le cron de Dolibarr (`scripts/cron/cron_run_jobs.php`), avec la
+clé de **Configuration → Modules → Travaux planifiés**. Chez un hébergeur, demandez-le
+lui. Avec l'image Docker officielle : un conteneur avec `DOLI_CRON=1`,
+`DOLI_CRON_KEY` égal à cette clé, et `DOLI_CRON_USER=firstadmin`.
+
+## Réimporter une journée
+
+Page du module → **Réimporter** : retire les écritures de la journée et les réécrit avec
+le plan comptable actuel de TiBillet. Impossible si une ligne est déjà validée.
+
+## Licence
+
+GPL v3 ou plus (voir `COPYING`). Développé par la coopérative TiBillet.
+
+---
+
+## Pour les développeuses et développeurs
+
+### Publier une version
+
+1. Changer `$this->version` dans `core/modules/modTiBillet.class.php`.
+2. Commiter et pousser.
+3. `make release` : vérifie que tout est commité et poussé, fabrique
+   `dist/module_tibillet-<version>.zip` (`git archive`, avec un dossier `tibillet/`
+   dedans, comme Dolibarr l'exige), pose le tag `v<version>` et publie la release
+   GitHub (outil `gh`).
+
+`make zip` fabrique seulement le zip. Ce que `.gitattributes` marque `export-ignore`
+(le script d'essai, le Makefile) n'entre pas dans le zip.
+
+### Essai automatique (instance de TEST seulement : il écrit et efface)
 
 ```bash
 php /var/www/html/custom/tibillet/scripts/essai.php
 ```
 
 Il vérifie : l'import, l'égalité grand livre = TiBillet compte par compte, aucune ligne
-validée, pas de doublon au second passage, le réimport, et le « tout ou rien ».
+validée, pas de doublon au second passage, le réimport, le « tout ou rien », le mode
+« articles et ventes » (aucune écriture), la synchro du catalogue (produits =
+TiBillet, `304`, prix remis, catégories manuelles gardées, collision de référence) et
+l'heure de la tâche ; puis, avec une réponse de TiBillet imitée : produit passé hors
+vente, réponse illisible, nom piégé (aucune balise dans le résumé), `304` qui garde le
+résumé, espaces en trop, fuseau horaire ; et les ventes (essais 22 à 35) : réglages,
+banques, codes de paiement, tiers par e-mail, factures payées et liées au compte,
+virements, avoirs, paiement divers, centime faux refusé, second passage, limite par
+passage, réimport refusé. **Il retire puis recrée les produits TiBillet, et laisse
+des factures d'essai.**
 
-## En développement (pile `dolibarr_stack` + Lespass de dev)
+### Avec la pile de développement (`dolibarr_stack` + Lespass de dev)
 
 - `docker-compose.override.yml` de la pile : monter ce dossier en
   `/var/www/html/custom/tibillet` sur les deux services, `extra_hosts:
   lespass.tibillet.localhost:host-gateway`, et `DOLI_CRON_USER: firstadmin`.
-- Réglages : adresse `https://lespass.tibillet.localhost`, **mode développement coché**
-  (nom lu dans `/etc/hosts`, certificat de dev non vérifié).
+- Sur une base neuve, la constante `CRON_KEY` de Dolibarr est vide : la mettre égale à
+  `DOLI_CRON_KEY`, sinon le cron répond « securitykey … does not match ».
+- Réglages du module : adresse `https://lespass.tibillet.localhost`, **mode
+  développement coché** (nom lu dans `/etc/hosts`, certificat de dev non vérifié).
+
+Spécification et décisions : dépôt Lespass,
+`TECH_DOC/SESSIONS/COMPTABILITE/CHANTIER-06-connecteurs-comptables/`.

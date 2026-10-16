@@ -1,0 +1,14 @@
+# Ce qui n'entre PAS dans le zip de release (git archive, voir le Makefile).
+# / What is NOT put in the release zip.
+
+# Le script d'essai écrit et efface dans le grand livre : instance de test seulement.
+# / The test script writes and deletes in the ledger: test instance only.
+scripts/ export-ignore
+
+# Les outils de publication. / Release tooling.
+Makefile export-ignore
+.gitattributes export-ignore
+.gitignore export-ignore
+
+# La documentation (Markdown + images) reste sur GitHub. / Docs stay on GitHub.
+docs/ export-ignore
