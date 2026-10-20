@@ -80,13 +80,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 			if ($mode_demande !== $mode_d_avant && $nombre_de_clotures_importees > 0) {
 				setEventMessages($langs->trans('TiBilletModeChangeAlerte', $nombre_de_clotures_importees), null, 'warnings');
 			}
-			// Le mode « articles et ventes » range des produits, des categories, des
-			// factures, des tiers et des banques : il active les modules de Dolibarr qui
-			// les portent. Le mode « ecritures » n'en a pas besoin : ce ne sont pas des
-			// dependances du module.
-			// / Items and sales mode turns on the Dolibarr modules it fills.
+			// Chaque mode active les modules de Dolibarr qu'il remplit. Ce ne sont pas
+			// des dependances du module : l'autre mode n'en a pas besoin.
+			// - « articles et ventes » : produits, categories, factures, tiers, banques ;
+			// - « ecritures » : la comptabilite en partie double (le grand livre).
+			// / Each mode turns on the Dolibarr modules it fills.
 			if ($mode_demande === ImportTiBillet::MODE_VENTES) {
-				$modules_du_mode_ventes = array(
+				$modules_du_mode_choisi = array(
 					'product' => 'modProduct',
 					'service' => 'modService',
 					'category' => 'modCategorie',
@@ -94,10 +94,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 					'facture' => 'modFacture',
 					'banque' => 'modBanque',
 				);
-				foreach ($modules_du_mode_ventes as $nom_court => $module_a_activer) {
-					if (!isModEnabled($nom_court)) {
-						activateModule($module_a_activer);
-					}
+			} else {
+				$modules_du_mode_choisi = array(
+					'accounting' => 'modAccounting',
+				);
+			}
+			foreach ($modules_du_mode_choisi as $nom_court => $module_a_activer) {
+				if (!isModEnabled($nom_court)) {
+					activateModule($module_a_activer);
 				}
 			}
 		}

@@ -61,8 +61,10 @@ class ReglagesTiBillet extends ImportTiBillet
 
 	/**
 	 * Verifie Dolibarr avant un import des ventes, et regle ce que le module peut
-	 * regler (comptes generaux par defaut, codes de paiement, client de passage).
-	 * / Checks Dolibarr before a sales import and sets what the module can set.
+	 * regler (client de passage). Rien de la comptabilite de Dolibarr : ni comptes
+	 * generaux, ni journaux.
+	 * / Checks Dolibarr before a sales import and sets what the module can set; never
+	 * Dolibarr's accounting.
 	 *
 	 * @param User $user Auteur
 	 * @return int 0 si rien ne manque, -1 sinon (voir $this->manques)
@@ -81,25 +83,6 @@ class ReglagesTiBillet extends ImportTiBillet
 			}
 		}
 
-		// Les comptes generaux de Dolibarr : poses s'ils sont vides et que le compte
-		// existe dans le plan actif.
-		// / Dolibarr's general accounts: set when empty and present in the chart.
-		$this->poserUnCompteGeneral('ACCOUNTING_ACCOUNT_CUSTOMER', array('411000', '411'), $user);
-		$this->poserUnCompteGeneral('ACCOUNTING_VAT_SOLD_ACCOUNT', array('445711', '44571'), $user);
-		$this->poserUnCompteGeneral('ACCOUNTING_ACCOUNT_TRANSFER_CASH', array('580000', '58'), $user);
-		// Le journal de banque refuse d'ecrire sans compte fournisseur general, meme
-		// pour des encaissements, et sans compte des salaires ou des notes de frais si
-		// ces modules sont actifs (accountancy/journal/bankjournal.php).
-		// / The bank journal needs the general supplier account (and salaries, expense
-		// reports if enabled) to write anything.
-		$this->poserUnCompteGeneral('ACCOUNTING_ACCOUNT_SUPPLIER', array('401000', '401'), $user);
-		if (isModEnabled('salaries')) {
-			$this->poserUnCompteGeneral('SALARIES_ACCOUNTING_ACCOUNT_PAYMENT', array('421000', '421'), $user);
-		}
-		if (isModEnabled('expensereport')) {
-			$this->poserUnCompteGeneral('ACCOUNTING_ACCOUNT_EXPENSEREPORT', array('421000', '421'), $user);
-		}
-
 		// Les options du lieu qui changeraient les dates ou le stock : signalees.
 		// / Venue options that would change dates or stock: reported.
 		foreach (array('FAC_FORCE_DATE_VALIDATION', 'INVOICE_CHECK_POSTERIOR_DATE', 'STOCK_CALCULATE_ON_BILL') as $option) {
@@ -108,30 +91,10 @@ class ReglagesTiBillet extends ImportTiBillet
 			}
 		}
 
-		// Un compte pose sur un mode de paiement (Dictionnaires → Modes de paiement)
-		// remplace, dans le journal de banque, le compte de la banque
-		// (accountancy/journal/bankjournal.php) : le resultat ne serait plus celui du FEC.
-		// / An account set on a payment mode replaces the bank's in the bank journal.
-		$codes_utilises = array_unique(array_merge(array_values(self::CODE_PAR_MOYEN), array('LIQ', self::CODE_DES_MONNAIES)));
-		$liste_des_codes = "'".implode("','", array_map(array($this->db, 'escape'), $codes_utilises))."'";
-		$sql = "SELECT code, accountancy_code FROM ".$this->db->prefix()."c_paiement";
-		$sql .= " WHERE code IN (".$liste_des_codes.") AND entity IN (".getEntity('c_paiement').")";
-		$sql .= " AND accountancy_code IS NOT NULL AND accountancy_code <> ''";
-		$resql = $this->db->query($sql);
-		while ($resql && ($code_avec_compte = $this->db->fetch_object($resql))) {
-			$this->manques[] = $langs->transnoentities('TiBilletCompteSurModeDePaiement', $code_avec_compte->code, $code_avec_compte->accountancy_code);
-		}
-
 		// Le droit de l'utilisateur qui lance l'import (le cron, ou la personne).
 		// / The right of the user running the import.
 		if (!$user->hasRight('facture', 'creer')) {
 			$this->manques[] = $langs->transnoentities('TiBilletDroitFactureManquant', $user->login);
-		}
-
-		// Le journal de banque, pour les banques creees par le module.
-		// / The bank journal, for the banks the module creates.
-		if ($this->idDuJournalDeBanque() <= 0) {
-			$this->manques[] = $langs->transnoentities('TiBilletJournalBanqueManquant');
 		}
 
 		if (isModEnabled('societe') && $this->tiersDePassage($user) < 0) {
@@ -176,21 +139,18 @@ class ReglagesTiBillet extends ImportTiBillet
 			return (int) $ligne->rowid;
 		}
 
-		$compte_comptable = new AccountingAccount($this->db);
-		$libelle_du_compte = ($compte_comptable->fetch(0, $numero_dolibarr, 1) > 0) ? $compte_comptable->label : $numero_tibillet;
-
 		$banque = new Account($this->db);
 		$banque->ref = dol_trunc('TIB'.$numero_dolibarr, 12, 'right', 'UTF-8', 1);
-		// Le libelle d'une banque fait 30 caracteres au plus : le numero d'abord, il
-		// reste lisible meme coupe. / Bank labels are 30 chars max: number first.
-		$banque->label = dol_trunc('TiBillet '.$numero_tibillet.' '.$libelle_du_compte, 30, 'right', 'UTF-8', 1);
+		// Le libelle d'une banque fait 30 caracteres au plus. Le lieu peut le renommer
+		// dans Dolibarr : le lien passe par TIBILLET_BANQUE_<numero>, pas par le libelle.
+		// / Bank labels are 30 chars max; the venue may rename it.
+		$banque->label = dol_trunc('TiBillet '.$numero_tibillet, 30, 'right', 'UTF-8', 1);
 		$banque->type = (strpos((string) $numero_tibillet, '53') === 0) ? Account::TYPE_CASH : Account::TYPE_CURRENT;
 		$banque->courant = $banque->type;
 		$banque->country_id = $mysoc->country_id;
 		$banque->currency_code = $conf->currency;
 		$banque->date_solde = dol_now();
 		$banque->account_number = $numero_dolibarr;
-		$banque->fk_accountancy_journal = $this->idDuJournalDeBanque();
 		$banque->rappro = ($banque->type == Account::TYPE_CASH) ? 0 : 1;
 		$id_banque = $banque->create($user);
 		if ($id_banque <= 0) {
@@ -320,53 +280,9 @@ class ReglagesTiBillet extends ImportTiBillet
 		return $id_du_tiers;
 	}
 
-	/**
-	 * Le rowid d'un compte TiBillet dans le plan actif de Dolibarr, ou 0.
-	 * / The rowid of a TiBillet account in Dolibarr's active chart, or 0.
-	 */
-	public function idDuCompteComptable($numero_tibillet)
-	{
-		$compte = new AccountingAccount($this->db);
-		if ($compte->fetch(0, $this->numeroDeCompteDolibarr($numero_tibillet), 1) > 0) {
-			return (int) $compte->id;
-		}
-		return 0;
-	}
-
 	// ------------------------------------------------------------------
 	// Petits outils / Small helpers
 	// ------------------------------------------------------------------
-
-	/**
-	 * Pose un compte general de Dolibarr s'il est vide : le premier des numeros
-	 * TiBillet proposes qui existe dans le plan actif. Sinon, un manque.
-	 * / Sets a Dolibarr general account if empty, from the first existing number.
-	 */
-	private function poserUnCompteGeneral($constante, $numeros_proposes, $user)
-	{
-		global $conf, $langs;
-
-		if (getDolGlobalString($constante) !== '') {
-			return;
-		}
-		foreach ($numeros_proposes as $numero) {
-			$numero_dolibarr = $this->numeroDeCompteDolibarr($numero);
-			$compte = new AccountingAccount($this->db);
-			if ($compte->fetch(0, $numero_dolibarr, 1) > 0) {
-				dolibarr_set_const($this->db, $constante, $numero_dolibarr, 'chaine', 0, '', $conf->entity);
-				$this->faits[] = $langs->transnoentities('TiBilletCompteGeneralPose', $constante, $numero_dolibarr);
-				return;
-			}
-		}
-		$this->manques[] = $langs->transnoentities('TiBilletCompteGeneralManquant', $constante);
-	}
-
-	/** L'id du journal de banque (code BQ), ou 0 / Bank journal id, or 0 */
-	private function idDuJournalDeBanque()
-	{
-		$journal = new AccountingJournal($this->db);
-		return ($journal->fetch(0, 'BQ') > 0) ? (int) $journal->id : 0;
-	}
 
 	/**
 	 * L'id d'un code de paiement de llx_c_paiement : active s'il est inactif, cree

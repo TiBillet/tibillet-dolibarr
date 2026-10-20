@@ -57,9 +57,13 @@ La clé, c'est le mot de passe que Dolibarr donne à TiBillet. Elle ne permet qu
 vous changez de logiciel, ou si une personne qui connaissait la clé quitte le lieu :
 supprimez la clé dans TiBillet, et créez-en une nouvelle.
 
-## 4. Côté Dolibarr : préparer la comptabilité (une seule fois)
+## 4. Côté Dolibarr : préparer la comptabilité (mode écritures seulement)
 
-Dolibarr a besoin de sa comptabilité pour écrire son grand livre, dans les deux modes.
+🧾 **Mode « articles et ventes » : sautez cette étape.** Ce mode ne touche pas à la
+comptabilité de Dolibarr. Le module « Comptabilité (partie double) » peut rester éteint.
+
+📚 **Mode « écritures comptables »** : Dolibarr a besoin de sa comptabilité pour écrire
+son grand livre. Faites les trois étapes ci-dessous.
 
 ### 4.1 Activer le module « Comptabilité (partie double) »
 
@@ -154,7 +158,7 @@ Cliquez sur la **roue dentée** du module TiBillet. Remplissez :
 
 Cliquez sur **Enregistrer**. En mode articles et ventes, la page active aussi les modules
 de Dolibarr dont ce mode a besoin : Produits, Services, Catégories, Tiers, Factures et
-Banques.
+Banques. En mode écritures comptables, elle active « Comptabilité (partie double) ».
 
 ![La page du module : « Les articles et les ventes » en premier, la tâche à 6 h.](images/doli-14-mode-articles-et-ventes.jpg)
 

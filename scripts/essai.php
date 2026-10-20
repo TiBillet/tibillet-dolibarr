@@ -34,8 +34,10 @@
  * 15. Collision de ref « TIB-… » : erreur notee, produit du lieu intact, ETag non garde.
  * 22 a 34. Les ventes (06-D), avec une reponse de TiBillet IMITEE pour les clotures et
  *    les ventes : reglages, banques, codes de paiement, tiers par e-mail, factures
- *    payees et liees au compte, virements, avoirs, paiement divers, centime faux
+ *    payees sans lien comptable, virements, avoirs, paiement divers, centime faux
  *    refuse, second passage, limite par passage.
+ * 38. Comptabilite en partie double eteinte (en memoire) : les ventes arrivent quand
+ *    meme ; le mode « ecritures » refuse et dit pourquoi.
  * 16 a 21. Avec une reponse de TiBillet IMITEE (produits « Essai imite », retires a la
  *    fin) : 16. un produit deja cree qui n'est plus synchronisable passe hors vente ;
  *    17. une reponse illisible est une erreur, sans ETag ; 18. un nom piege n'arrive
@@ -797,11 +799,6 @@ $numero_de_cloture = 900000 + $numero_du_passage * 10;
 $reglages = new ReglagesTiBillet($db);
 $retour = $reglages->preparer($user);
 verifier($retour === 0 && empty($reglages->manques), '22. Réglages préparés, rien ne manque ('.implode(' | ', $reglages->manques).')');
-verifier(getDolGlobalString('ACCOUNTING_ACCOUNT_CUSTOMER') !== '', '22. Compte client général posé ('.getDolGlobalString('ACCOUNTING_ACCOUNT_CUSTOMER').')');
-// Le journal de banque refuse d'ecrire sans compte fournisseur general, meme pour des
-// encaissements (accountancy/journal/bankjournal.php).
-// / The bank journal refuses to write without a general supplier account.
-verifier(getDolGlobalString('ACCOUNTING_ACCOUNT_SUPPLIER') !== '', '22. Compte fournisseur général posé, exigé par le journal de banque ('.getDolGlobalString('ACCOUNTING_ACCOUNT_SUPPLIER').')');
 $reglages = new ReglagesTiBillet($db);
 $reglages->preparer($user);
 verifier(empty($reglages->faits), '22. Second passage : rien de plus à régler ('.implode(' | ', $reglages->faits).')');
@@ -817,23 +814,13 @@ $compte_apres = $db->fetch_object($db->query("SELECT accountancy_code_sell FROM 
 $db->query("UPDATE ".$db->prefix()."c_tva SET accountancy_code_sell = '".$db->escape((string) $ligne_du_taux->accountancy_code_sell)."' WHERE rowid = ".((int) $ligne_du_taux->rowid));
 verifier($compte_apres === 'ESSAI', '22 bis. Un compte de TVA posé à la main reste ('.$compte_apres.')');
 
-// 22 ter. Un compte comptable pose sur un mode de paiement (Dictionnaires) remplace
-// celui de la banque dans le journal de banque : c'est un manque, l'import ne demarre
-// pas. / An account on a payment mode replaces the bank's: reported, import blocked.
-$compte_de_cb_avant = $db->fetch_object($db->query("SELECT accountancy_code FROM ".$db->prefix()."c_paiement WHERE code = 'CB' AND entity IN (".getEntity('c_paiement').")"))->accountancy_code;
-$db->query("UPDATE ".$db->prefix()."c_paiement SET accountancy_code = '5112' WHERE code = 'CB' AND entity IN (".getEntity('c_paiement').")");
-$reglages_cb = new ReglagesTiBillet($db);
-$retour_cb = $reglages_cb->preparer($user);
-$db->query("UPDATE ".$db->prefix()."c_paiement SET accountancy_code = ".($compte_de_cb_avant === null ? "NULL" : "'".$db->escape($compte_de_cb_avant)."'")." WHERE code = 'CB' AND entity IN (".getEntity('c_paiement').")");
-verifier($retour_cb === -1 && strpos(implode(' ', $reglages_cb->manques), 'CB') !== false, '22 ter. Compte posé sur le mode CB : signalé, l\'import ne démarre pas ('.implode(' | ', $reglages_cb->manques).')');
-
 // 23. Une banque par compte de tresorerie : la caisse (530) en type caisse, le
 // meme rowid au second appel.
 // / One bank per treasury account; same rowid on the second call.
 $id_caisse = $reglages->banquePourLeCompte('530000', $user);
 $banque = new Account($db);
 $banque->fetch($id_caisse);
-verifier($id_caisse > 0 && (int) $banque->type === Account::TYPE_CASH && $banque->account_number === '53' && (int) $banque->fk_accountancy_journal > 0, '23. Banque de la caisse : type caisse, compte 53, journal posé');
+verifier($id_caisse > 0 && (int) $banque->type === Account::TYPE_CASH && $banque->account_number === '53', '23. Banque de la caisse : type caisse, compte 53');
 verifier($reglages->banquePourLeCompte('530000', $user) === $id_caisse, '23. Second appel : la même banque');
 // 23 bis. Sans le lien enregistre, la banque qui porte deja ce compte est retrouvee,
 // pas recreee. / Without the saved link, the bank holding the account is found again.
@@ -896,13 +883,11 @@ list($retour, $import) = passageDesVentes($db, array($cloture_a), array($cloture
 verifier($retour === 0, '27. Un passage des ventes sans erreur ('.str_replace("\n", ' | ', $import->output).($import->error ? ' / '.$import->error : '').')');
 
 $facture_1 = factureDeLaVenteImitee($db, 1);
-$compte_707 = new AccountingAccount($db);
-$compte_707->fetch(0, '707', 1);
 $facture_1_juste = $facture_1 && (int) $facture_1->status === Facture::STATUS_CLOSED && (int) $facture_1->paye === 1
 	&& round((float) $facture_1->total_ttc, 2) === 5.0 && round((float) $facture_1->total_ht, 2) === 4.17
 	&& (int) $facture_1->socid === $id_tiers && count($facture_1->lines) === 1
-	&& (int) $facture_1->lines[0]->fk_code_ventilation === (int) $compte_707->id;
-verifier($facture_1_juste, '27. Bière en espèces : facture validée, payée, 5,00 TTC, au tiers de l\'e-mail, ligne liée au 707');
+	&& (int) $facture_1->lines[0]->fk_code_ventilation === 0;
+verifier($facture_1_juste, '27. Bière en espèces : facture validée, payée, 5,00 TTC, au tiers de l\'e-mail, ligne sans lien comptable');
 $paiements_1 = $facture_1 ? $facture_1->getListOfPayments() : array();
 $banque_du_paiement_1 = $facture_1 ? $db->fetch_object($db->query("SELECT b.fk_account FROM ".$db->prefix()."paiement_facture as pf JOIN ".$db->prefix()."paiement as p ON p.rowid = pf.fk_paiement JOIN ".$db->prefix()."bank as b ON b.rowid = p.fk_bank WHERE pf.fk_facture = ".((int) $facture_1->id))) : null;
 verifier(count($paiements_1) === 1 && $paiements_1[0]['type'] === 'LIQ' && $banque_du_paiement_1 && (int) $banque_du_paiement_1->fk_account === $id_caisse, '27. Un paiement LIQ, en banque sur la caisse');
@@ -1009,6 +994,29 @@ if ($limite_d_avant === '') {
 	dolibarr_del_const($db, 'TIBILLET_VENTES_PAR_PASSAGE', $conf->entity);
 } else {
 	dolibarr_set_const($db, 'TIBILLET_VENTES_PAR_PASSAGE', $limite_d_avant, 'chaine', 0, '', $conf->entity);
+}
+
+// 38. Comptabilite en partie double eteinte, EN MEMOIRE seulement (le module reste
+// actif dans la base) : les ventes arrivent quand meme ; le mode « ecritures »
+// refuse et dit pourquoi.
+// / Double-entry accounting off, in memory only: sales still arrive; entries refuse.
+$module_comptable_avant = $conf->modules['accounting'] ?? null;
+unset($conf->modules['accounting']);
+$cloture_e = clotureImitee($numero_de_cloture + 5);
+$ventes_e = array(
+	venteImitee(51, array(ligneImitee($tarif_vendu, 500, 417, 83)), array(array('treasuryAccount' => '530000', 'method' => 'CA', 'amount' => 500))),
+);
+list($retour, $import) = passageDesVentes($db, array($cloture_e), array($cloture_e['uuid'] => $ventes_e));
+$facture_51 = factureDeLaVenteImitee($db, 51);
+verifier(!isModEnabled('accounting') && $retour === 0 && $facture_51 && (int) $facture_51->paye === 1 && round((float) $facture_51->total_ttc, 2) === 5.0, '38. Comptabilité éteinte : la vente arrive en facture payée ('.str_replace("\n", ' | ', $import->output).($import->error ? ' / '.$import->error : '').')');
+dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_ECRITURES, 'chaine', 0, '', $conf->entity);
+$import_ecritures = new ImportTiBillet($db);
+$lignes_du_grand_livre_avant = nombreDeLignes($db);
+$retour = $import_ecritures->importerLesClotures();
+verifier($retour === -1 && $import_ecritures->error === $langs->transnoentities('TiBilletComptabiliteInactive') && nombreDeLignes($db) === $lignes_du_grand_livre_avant, '38. Comptabilité éteinte : le mode écritures refuse et le dit ('.$import_ecritures->error.')');
+dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_VENTES, 'chaine', 0, '', $conf->entity);
+if ($module_comptable_avant !== null) {
+	$conf->modules['accounting'] = $module_comptable_avant;
 }
 
 // 35. « Reimporter » une cloture importee en mode ventes : refuse, meme en mode

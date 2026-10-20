@@ -24,13 +24,12 @@
  * 2. echoue si les modules Produits, Services ou Categories sont inactifs ;
  * 3. lit TOUT le catalogue : GET /api/v2/products/?accounting=true, avec l'ETag du
  *    dernier passage reussi dans If-None-Match. 304 = rien n'a change : fin ;
- * 4. cree les comptes qui manquent (comme l'import des clotures) ;
- * 5. range les categories sous deux meres : « Caisse TiBillet » (une fille par
+ * 4. range les categories sous deux meres : « Caisse TiBillet » (une fille par
  *    categorie de caisse) et « Types TiBillet » (une fille par type de produit) ;
- * 6. pour chaque TARIF en euros d'un produit qui est une vente (`forAccountingSync`) :
+ * 5. pour chaque TARIF en euros d'un produit qui est une vente (`forAccountingSync`) :
  *    cree ou met a jour UN produit Dolibarr (ref_ext = uuid du tarif), dans UNE
  *    transaction par tarif : une erreur n'arrete pas les autres ;
- * 7. enregistre le nouvel ETag seulement si AUCUNE erreur : sinon la nuit suivante
+ * 6. enregistre le nouvel ETag seulement si AUCUNE erreur : sinon la nuit suivante
  *    refait tout.
  *
  * CE QUE LE MODULE NE FAIT JAMAIS : supprimer un produit ou une categorie (un produit
@@ -48,9 +47,11 @@ require_once DOL_DOCUMENT_ROOT.'/core/lib/admin.lib.php';
 dol_include_once('/tibillet/class/importtibillet.class.php');
 
 /**
- * La synchro du catalogue. Herite de l'import : meme appel a TiBillet, meme creation
- * des comptes, meme forme des numeros de compte.
- * / The catalogue sync; reuses the import's call, accounts creation and numbers.
+ * La synchro du catalogue. Herite de l'import : meme appel a TiBillet, meme forme
+ * des numeros de compte. Le compte de vente est seulement ecrit sur le produit : le
+ * plan comptable de Dolibarr n'est jamais touche.
+ * / The catalogue sync; reuses the import's call and account numbers. The chart of
+ * accounts is never touched.
  */
 class CatalogueTiBillet extends ImportTiBillet
 {
@@ -129,12 +130,7 @@ class CatalogueTiBillet extends ImportTiBillet
 			return -1;
 		}
 
-		// 2. Les comptes / The accounts
-		if ($this->creerLesComptesManquants($user) < 0) {
-			return -1;
-		}
-
-		// 3. Les deux meres et les filles deja connues / Parents and known children
+		// 2. Les deux meres et les filles deja connues / Parents and known children
 		$mere_caisse = $this->trouverOuCreerUneCategorie(self::REF_EXT_MERE_CAISSE, $langs->transnoentities('TiBilletCategorieCaisse'), 0, $user);
 		$mere_types = $this->trouverOuCreerUneCategorie(self::REF_EXT_MERE_TYPES, $langs->transnoentities('TiBilletCategorieTypes'), 0, $user);
 		if ($mere_caisse < 0 || $mere_types < 0) {
@@ -142,14 +138,14 @@ class CatalogueTiBillet extends ImportTiBillet
 		}
 		$this->categories_tibillet = $this->filles($mere_caisse, $mere_types);
 
-		// 4. Les tarifs / The prices
+		// 3. Les tarifs / The prices
 		$this->compteurs = array('crees' => 0, 'mis_a_jour' => 0, 'inchanges' => 0, 'ecartes' => 0, 'non_crees' => 0, 'erreurs' => 0);
 		$this->phrases_du_passage = array();
 		foreach ($reponse['donnees']['results'] as $produit_tibillet) {
 			$this->synchroniserUnProduit($produit_tibillet, $mere_caisse, $mere_types, $user);
 		}
 
-		// 5. L'ETag, seulement sans erreur / The ETag, only without error
+		// 4. L'ETag, seulement sans erreur / The ETag, only without error
 		if ($this->compteurs['erreurs'] === 0 && $reponse['etag'] !== '') {
 			dolibarr_set_const($this->db, 'TIBILLET_CATALOGUE_ETAG', $reponse['etag'], 'chaine', 0, '', $conf->entity);
 		}

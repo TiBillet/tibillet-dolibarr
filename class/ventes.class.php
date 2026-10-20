@@ -16,12 +16,17 @@
  *
  * TiBillet fait TOUT le calcul (route /api/v2/closures/<uuid>/sales/) : lignes au
  * tarif, comptes, TVA, paiements par compte de tresorerie, virements, paiements
- * divers. Ce module recopie, sans decider. Compte par compte, le resultat est celui
- * du FEC de la cloture.
+ * divers. Ce module recopie, sans decider.
+ *
+ * CE MODE NE TOUCHE PAS A LA COMPTABILITE DE DOLIBARR : ni plan comptable, ni comptes
+ * generaux, ni journaux. Le compte de vente voyage seulement sur le produit
+ * (catalogue.class.php). Le module « Comptabilite (partie double) » peut etre eteint.
+ * / This mode never touches Dolibarr's accounting: no chart, no general accounts, no
+ * journals. Double-entry accounting may be disabled.
  *
  * FLUX D'UN PASSAGE (importerLesVentes) :
- * 1. Garde du mode et de la configuration ; comptes manquants crees (comme le mode
- *    ecritures) ; reglages de Dolibarr verifies (ReglagesTiBillet::preparer).
+ * 1. Garde du mode et de la configuration ; reglages de Dolibarr verifies
+ *    (ReglagesTiBillet::preparer).
  * 2. Les clotures a importer (meme curseur que le mode ecritures : une cloture n'est
  *    importee que dans un mode).
  * 3. Pour chaque cloture, page apres page, chaque vente dans UNE transaction
@@ -32,7 +37,7 @@
  * 4. Cloture terminee : notee en mode « ventes ».
  * Spec : depot Lespass, TECH_DOC/SESSIONS/COMPTABILITE/CHANTIER-06-connecteurs-
  * comptables/CHANTIER-06-D-ventes.md.
- * / A run: guards, accounts, settings; closures; each sale in one transaction; a
+ * / A run: guards, settings; closures; each sale in one transaction; a
  * refused sale stops the run; only the optional per-run limit cuts it.
  */
 
@@ -86,10 +91,7 @@ class VentesTiBillet extends ImportTiBillet
 		$this->compteurs = array('clotures' => 0, 'factures' => 0, 'avoirs' => 0, 'virements' => 0, 'paiements_divers' => 0, 'ventes' => 0);
 		$this->phrases_du_passage = array();
 
-		// 1. Comptes et reglages / Accounts and settings
-		if ($this->creerLesComptesManquants($user) < 0) {
-			return $this->finirLePassage(-1);
-		}
+		// 1. Les reglages / Settings
 		$this->reglages = new ReglagesTiBillet($this->db);
 		if ($this->reglages->preparer($user) < 0) {
 			$this->error = $langs->transnoentities('TiBilletReglagesManquants', implode(' ; ', $this->reglages->manques));
@@ -364,12 +366,12 @@ class VentesTiBillet extends ImportTiBillet
 	}
 
 	/**
-	 * Ajoute une ligne a la facture, en TTC, liee d'avance a son compte de vente
-	 * (fk_code_ventilation) : le comptable n'a rien a lier. Quantite x prix si Dolibarr
+	 * Ajoute une ligne a la facture, en TTC, sans compte comptable (fk_code_ventilation
+	 * = 0) : le compte de vente est celui du produit. Quantite x prix si Dolibarr
 	 * retombe sur le TTC de TiBillet, sinon une ligne de quantite 1 au TTC, la vraie
 	 * quantite dans le libelle (D8). Sans produit Dolibarr pour le tarif : une ligne
-	 * libre, au meme compte, et une phrase dans le resume.
-	 * / Adds a TTC line pre-bound to its sales account.
+	 * libre, sans compte, et une phrase dans le resume.
+	 * / Adds a TTC line; its sales account is the product's.
 	 *
 	 * @return int 1 si OK, -1 sinon
 	 */
@@ -377,11 +379,6 @@ class VentesTiBillet extends ImportTiBillet
 	{
 		global $langs, $mysoc;
 
-		$id_du_compte = $this->reglages->idDuCompteComptable($ligne['accountingAccount']);
-		if ($id_du_compte <= 0) {
-			$this->error = $langs->transnoentities('TiBilletCompteAbsentDuPlan', $ligne['accountingAccount']);
-			return -1;
-		}
 		$taux = (float) $ligne['vatRate'];
 		if ($taux != 0 && !empty($ligne['vatAccountingAccount'])) {
 			$this->reglages->poserLeCompteDeTva($ligne['vatRate'], $ligne['vatAccountingAccount']);
@@ -429,7 +426,7 @@ class VentesTiBillet extends ImportTiBillet
 			0,                  // remise_percent
 			'',                 // date_start
 			'',                 // date_end
-			$id_du_compte,      // fk_code_ventilation : la ligne est liee d'avance
+			0,                  // fk_code_ventilation : pas de lien comptable
 			0,                  // info_bits
 			0,                  // fk_remise_except
 			'TTC',              // price_base_type

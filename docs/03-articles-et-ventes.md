@@ -63,8 +63,6 @@ Sur la page du module, cliquez **Tester la connexion**. Le module vérifie les t
 droits de la clé, puis
 **prépare Dolibarr** et dit ce qu'il a fait :
 
-- il pose les **comptes généraux** vides (client 411, fournisseur 401, TVA, virements
-  internes 58) ;
 - il active les **modes de paiement** dont il a besoin (`VAD` pour Stripe) et crée
   « Monnaie TiBillet » (`TIB`) ;
 - il crée le **client de passage**.
@@ -93,10 +91,10 @@ de ventes, de factures, d'avoirs, de virements et de paiements divers sont arriv
 
 ![Le dernier passage du catalogue et des ventes, sur la page du module.](images/doli-18-ventes-importees.jpg)
 
-Une facture importée est **payée**, à la date de la journée, et sa ligne est **déjà
-reliée** à son compte de vente : le comptable n'a rien à « lier ».
+Une facture importée est **payée**, à la date de la journée. Son compte de vente est
+celui du **produit** (fiche produit → onglet Comptabilité).
 
-![Une facture importée : un billet et une adhésion, réglés par Stripe sur la banque TIB5171 ; chaque ligne est déjà affectée à son compte (706, 756).](images/doli-19-facture.jpg)
+![Une facture importée : un billet et une adhésion, réglés par Stripe sur la banque TIB5171.](images/doli-19-facture.jpg)
 
 ### Les banques et le client de passage
 
@@ -110,15 +108,18 @@ choisir pour un autre compte.
 
 ## 6. La comptabilité dans Dolibarr
 
-Dolibarr écrit les factures et les paiements dans son grand livre quand **vous** le
-décidez : **Comptabilité → Journaux**.
+Ce mode **ne touche pas** à la comptabilité de Dolibarr : ni plan comptable, ni comptes
+généraux, ni journaux. Le module « Comptabilité (partie double) » peut rester éteint.
 
-- **Journal des ventes** : chaque facture, au 411 (client), au compte de vente et au
-  compte de TVA de son taux. Aucune ligne « à lier ».
-- **Journal de banque** : les paiements, les virements internes (par le compte 58) et
-  les paiements divers.
+Si vous l'utilisez quand même, c'est vous qui réglez la comptabilité de Dolibarr : plan
+comptable, comptes généraux (client 411, fournisseur 401, TVA, virements internes 58),
+journaux. Puis :
 
-Vérifiez, puis cliquez **Enregistrer les écritures comptables en comptabilité**.
+1. **Comptabilité → Liaison → Ventes clients** : **Lier automatiquement**. Chaque ligne
+   prend le compte de vente de son produit. Une ligne sans produit (tarif absent du
+   catalogue) se lie à la main.
+2. **Comptabilité → Journaux** : vérifiez, puis cliquez **Enregistrer les écritures
+   comptables en comptabilité**.
 
 ![Le journal des ventes : 411, compte de vente, TVA par taux (ici des avoirs, en sens inverse).](images/doli-21-journal-des-ventes.jpg)
 

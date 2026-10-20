@@ -254,6 +254,14 @@ class ImportTiBillet
 			return 0;
 		}
 
+		// Le grand livre n'existe qu'avec la comptabilite en partie double. Ce n'est
+		// pas une dependance du module : la page l'active en passant dans ce mode.
+		// / The ledger needs double-entry accounting; the module page enables it.
+		if (!isModEnabled('accounting')) {
+			$this->error = $langs->transnoentities('TiBilletComptabiliteInactive');
+			return -1;
+		}
+
 		// 1. Les comptes / The accounts
 		$nombre_de_comptes_crees = $this->creerLesComptesManquants($user);
 		if ($nombre_de_comptes_crees < 0) {

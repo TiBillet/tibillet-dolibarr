@@ -62,8 +62,8 @@ il explique les mots « compte », « journal », « débit » et « crédit ».
   sont en français, quelle que soit la langue de Dolibarr.
 - **Les ventes** des journées clôturées, jamais en temps réel :
   - une **facture payée par vente** TiBillet (un **avoir** pour un remboursement, relié
-    à la facture d'origine si elle est dans Dolibarr), ses lignes déjà **liées** à leur
-    compte de vente et la TVA à son compte par taux : le comptable n'a rien à lier ;
+    à la facture d'origine si elle est dans Dolibarr), au compte de vente de chaque
+    produit ;
   - le **tiers** : l'acheteur, retrouvé par son **e-mail** (créé s'il manque, l'e-mail
     comme nom), sinon le **client de passage** (comme la caisse TakePOS) ;
   - une **banque Dolibarr par compte de trésorerie** de TiBillet (caisse, CB, Stripe,
@@ -77,9 +77,12 @@ il explique les mots « compte », « journal », « débit » et « crédit ».
   après page. Si PHP coupe trop tôt sur votre serveur, la constante
   `TIBILLET_VENTES_PAR_PASSAGE` limite le nombre de ventes par passage ; la suite
   arrive au passage suivant.
-- **Ce que le module règle lui-même** dans Dolibarr, et dit : comptes généraux client,
-  TVA et virements internes s'ils sont vides, codes de paiement (`VAD`, `TIB`), compte
-  de TVA de chaque taux s'il est vide, banques, client de passage. **Ce qu'il signale
+- **Ce mode ne touche pas à la comptabilité de Dolibarr** (ni plan comptable, ni
+  comptes généraux, ni journaux) : le module « Comptabilité (partie double) » peut
+  rester éteint. Le compte de vente voyage seulement sur le produit.
+- **Ce que le module règle lui-même** dans Dolibarr, et dit : codes de paiement
+  (`VAD`, `TIB`), compte de TVA de chaque taux s'il est vide, banques, client de
+  passage. **Ce qu'il signale
   seulement** (l'import ne démarre pas) : un module inactif, les options
   `FAC_FORCE_DATE_VALIDATION`, `INVOICE_CHECK_POSTERIOR_DATE` ou
   `STOCK_CALCULATE_ON_BILL` allumées, un utilisateur sans droit de créer des factures.
@@ -94,9 +97,10 @@ il explique les mots « compte », « journal », « débit » et « crédit ».
 
 1. **Dans TiBillet** : Paramètres → Clés API → ajouter une clé, avec **seulement**
    « Comptabilité (lecture) ». Copiez la clé : elle ne s'affiche qu'une fois.
-2. **Dans Dolibarr (version 24 ou plus)** : activez le module « Comptabilité (partie
-   double) », chargez un plan comptable (par exemple FR - PCG18-ASSOC pour une
-   association) et ouvrez un **exercice comptable**.
+2. **Dans Dolibarr (version 24 ou plus)**, pour le mode « écritures comptables »
+   seulement : activez le module « Comptabilité (partie double) », chargez un plan
+   comptable (par exemple FR - PCG18-ASSOC pour une association) et ouvrez un
+   **exercice comptable**. Le mode « articles et ventes » n'en a pas besoin.
 3. Téléchargez **`module_tibillet-<version>.zip`** sur la
    [page des versions](https://github.com/TiBillet/tibillet-dolibarr/releases).
    ⚠️ Pas « Source code (zip) » : Dolibarr ne saurait pas l'installer.
@@ -157,9 +161,10 @@ TiBillet, `304`, prix remis, catégories manuelles gardées, collision de réfé
 l'heure de la tâche ; puis, avec une réponse de TiBillet imitée : produit passé hors
 vente, réponse illisible, nom piégé (aucune balise dans le résumé), `304` qui garde le
 résumé, espaces en trop, fuseau horaire ; et les ventes (essais 22 à 35) : réglages,
-banques, codes de paiement, tiers par e-mail, factures payées et liées au compte,
+banques, codes de paiement, tiers par e-mail, factures payées sans lien comptable,
 virements, avoirs, paiement divers, centime faux refusé, second passage, limite par
-passage, réimport refusé. **Il retire puis recrée les produits TiBillet, et laisse
+passage, réimport refusé ; enfin la comptabilité éteinte (essai 38) : les ventes
+arrivent, le mode écritures refuse. **Il retire puis recrée les produits TiBillet, et laisse
 des factures d'essai.**
 
 ### Avec la pile de développement (`dolibarr_stack` + Lespass de dev)

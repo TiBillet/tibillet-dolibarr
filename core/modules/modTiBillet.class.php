@@ -75,12 +75,14 @@ class modTiBillet extends DolibarrModules
 		$this->dirs = array();
 		$this->config_page_url = array("setup.php@tibillet");
 
-		// Le grand livre n'existe que si la comptabilite en partie double est active.
-		// / The general ledger only exists when double-entry accounting is enabled.
+		// Pas de modAccounting ici : le mode « articles et ventes » ne touche pas a la
+		// comptabilite. La page du module active la comptabilite en partie double
+		// seulement quand on choisit le mode « ecritures » (admin/setup.php).
+		// / No modAccounting: only the "entries" mode needs it, the module page enables it.
 		// modCron : sans le module « Travaux planifiés », cron_run_jobs.php annule la
 		// tâche de nuit (« Module Scheduled jobs (cron) not activated »). Dolibarr
 		// l'active tout seul avec TiBillet. / Without modCron the nightly job is cancelled.
-		$this->depends = array('modAccounting', 'modCron');
+		$this->depends = array('modCron');
 		$this->requiredby = array();
 		$this->conflictwith = array();
 		$this->langfiles = array("tibillet@tibillet");
