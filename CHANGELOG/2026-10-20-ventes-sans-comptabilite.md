@@ -24,7 +24,8 @@ Dolibarr without a complete chart of accounts.
 ### Fichiers modifies / Modified files
 | Fichier / File | Changement / Change |
 |---|---|
-| `core/modules/modTiBillet.class.php` | `modAccounting` retiré de `depends` |
+| `core/modules/modTiBillet.class.php` | `modAccounting` retiré de `depends` ; version 0.3.0 |
+| `Makefile` | `make release` passe à la version suivante (0.3.0 → 0.4.0) si la version du descripteur a déjà son tag |
 | `admin/setup.php` | Mode « écritures » choisi → active `modAccounting` |
 | `class/importtibillet.class.php` | `importerLesClotures` : refus si la comptabilité est éteinte |
 | `class/catalogue.class.php` | Plus de `creerLesComptesManquants` |
