@@ -8,7 +8,8 @@
  * A LANCER DANS LE CONTENEUR DOLIBARR, sur une instance de TEST (il ecrit et efface
  * dans le grand livre) :
  *     php /var/www/html/custom/tibillet/scripts/essai.php
- * Prerequis : module active, reglages remplis (adresse, cle, mode dev), un exercice
+ * Prerequis : module active, « Comptabilite (partie double) » active (essais du mode
+ * ecritures), reglages remplis (adresse, cle, mode dev), un exercice
  * ouvert, et chez TiBillet au moins une cloture J avec deux journaux (ex. BAR + WEB).
  *
  * CE QUI EST VERIFIE :
@@ -32,6 +33,7 @@
  * 13. Un produit sans ref_ext TiBillet n'est jamais touche.
  * 14. L'heure de la tache de nuit : recalage, heure invalide refusee.
  * 15. Collision de ref « TIB-… » : erreur notee, produit du lieu intact, ETag non garde.
+ * 15 bis. Categorie recreee chez TiBillet (meme nom, nouvel identifiant) : reprise.
  * 22 a 34. Les ventes (06-D), avec une reponse de TiBillet IMITEE pour les clotures et
  *    les ventes : reglages, banques, codes de paiement, tiers par e-mail, factures
  *    payees sans lien comptable, virements, avoirs, paiement divers, centime faux
@@ -572,6 +574,22 @@ verifier($produit_relu->label === 'Produit du lieu en collision' && (string) $pr
 $produit_relu->delete($user);
 list($retour, $catalogue) = synchroniserSansEtag($db);
 verifier($retour === 0 && produitDuTarif($db, $tarif_en_collision) > 0 && getDolGlobalString('TIBILLET_CATALOGUE_ETAG') !== '', '15. Collision levée : le tarif est créé, l\'ETag enregistré');
+
+// 15 bis. Une categorie de caisse supprimee puis recreee chez TiBillet (meme nom,
+// nouvel identifiant) : la categorie de Dolibarr du meme nom est reprise et prend le
+// nouvel identifiant, aucune categorie creee.
+// / A POS category recreated in TiBillet (same name, new id): the same-named one is reused.
+$categorie_d_avant = new Categorie($db);
+$categorie_d_avant->label = 'Essai catégorie recréée';
+$categorie_d_avant->type = Categorie::TYPE_PRODUCT;
+$categorie_d_avant->fk_parent = $mere_caisse;
+$categorie_d_avant->ref_ext = identifiantImite(90);
+$id_de_la_categorie_d_avant = $categorie_d_avant->create($user);
+$categories_avant = compter($db, 'categorie');
+$id_repris = appelerMethodePrivee($catalogue, 'trouverOuCreerUneCategorie', array(identifiantImite(91), 'Essai catégorie recréée', $mere_caisse, $user));
+verifier($id_de_la_categorie_d_avant > 0 && $id_repris === $id_de_la_categorie_d_avant && categorieParRefExt($db, identifiantImite(91)) === $id_de_la_categorie_d_avant && compter($db, 'categorie') === $categories_avant, '15 bis. Catégorie recréée chez TiBillet (même nom, nouvel identifiant) : reprise, aucune catégorie créée');
+$categorie_d_avant->fetch($id_de_la_categorie_d_avant);
+$categorie_d_avant->delete($user);
 
 // 16 a 21 : reponse de TiBillet imitee / Faked TiBillet answer
 $tarif_imite_1 = identifiantImite(1);

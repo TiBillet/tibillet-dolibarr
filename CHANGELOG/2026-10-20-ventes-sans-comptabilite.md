@@ -28,7 +28,7 @@ Dolibarr without a complete chart of accounts.
 | `Makefile` | `make release` passe à la version suivante (0.3.0 → 0.4.0) si la version du descripteur a déjà son tag |
 | `admin/setup.php` | Mode « écritures » choisi → active `modAccounting` |
 | `class/importtibillet.class.php` | `importerLesClotures` : refus si la comptabilité est éteinte |
-| `class/catalogue.class.php` | Plus de `creerLesComptesManquants` |
+| `class/catalogue.class.php` | Plus de `creerLesComptesManquants` ; une catégorie introuvable par son identifiant TiBillet reprend celle du même nom sous la même mère (catégorie supprimée puis recréée chez TiBillet) |
 | `class/ventes.class.php` | Plus de `creerLesComptesManquants` ; ligne de facture sans `fk_code_ventilation` ni refus « compte absent du plan » |
 | `class/reglages.class.php` | `preparer()` : plus de comptes généraux, journal `BQ`, comptes sur modes de paiement. Banque créée sans journal, libellé « TiBillet <compte> ». Retrait de `poserUnCompteGeneral`, `idDuJournalDeBanque`, `idDuCompteComptable` |
 | `langs/*/tibillet.lang` | 5 clés retirées, `TiBilletComptabiliteInactive` ajoutée |

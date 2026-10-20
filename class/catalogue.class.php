@@ -525,9 +525,10 @@ class CatalogueTiBillet extends ImportTiBillet
 
 	/**
 	 * La categorie de produits de ce ref_ext (recherche EXACTE : Categorie::fetch fait
-	 * un LIKE, sans filtre de type). Creee si elle manque, renommee si son libelle a
-	 * change chez TiBillet.
-	 * / The product category with this exact ref_ext; created or renamed if needed.
+	 * un LIKE, sans filtre de type). Sinon, celle du meme nom sous la meme mere, qui
+	 * prend ce ref_ext. Sinon, creee. Renommee si son libelle a change chez TiBillet.
+	 * / The product category with this exact ref_ext, else the same-named sibling
+	 * (which takes the ref_ext), else created; renamed if needed.
 	 *
 	 * @return int rowid, ou -1
 	 */
@@ -539,10 +540,12 @@ class CatalogueTiBillet extends ImportTiBillet
 		// / Categorie::update() trims: compare without edge spaces.
 		$libelle = trim((string) $libelle);
 
+		$categorie_pour_lire_les_types = new Categorie($this->db);
+		$type_produit = (int) $categorie_pour_lire_les_types->MAP_ID[Categorie::TYPE_PRODUCT];
+
 		$sql = "SELECT rowid, label FROM ".$this->db->prefix()."categorie";
 		$sql .= " WHERE ref_ext = '".$this->db->escape($ref_ext)."'";
-		$categorie_pour_lire_les_types = new Categorie($this->db);
-		$sql .= " AND type = ".((int) $categorie_pour_lire_les_types->MAP_ID[Categorie::TYPE_PRODUCT]);
+		$sql .= " AND type = ".$type_produit;
 		$sql .= " AND entity IN (".getEntity('category').")";
 		$resql = $this->db->query($sql);
 		$ligne = $resql ? $this->db->fetch_object($resql) : null;
@@ -558,6 +561,28 @@ class CatalogueTiBillet extends ImportTiBillet
 				}
 			}
 			return (int) $ligne->rowid;
+		}
+
+		// Une categorie du meme nom sous la meme mere est reprise : Dolibarr refuse d'en
+		// creer une seconde (Categorie::already_exists, meme critere qu'ici). C'est le
+		// cas d'une categorie supprimee puis recreee chez TiBillet : meme nom, nouvel
+		// identifiant.
+		// / A same-named sibling is reused: Dolibarr refuses a second one.
+		$sql = "SELECT rowid FROM ".$this->db->prefix()."categorie";
+		$sql .= " WHERE fk_parent = ".((int) $id_de_la_mere);
+		$sql .= " AND label = '".$this->db->escape($libelle)."'";
+		$sql .= " AND type = ".$type_produit;
+		$sql .= " AND entity IN (".getEntity('category').")";
+		$resql = $this->db->query($sql);
+		$meme_nom = $resql ? $this->db->fetch_object($resql) : null;
+		if ($meme_nom) {
+			$sql = "UPDATE ".$this->db->prefix()."categorie SET ref_ext = '".$this->db->escape($ref_ext)."'";
+			$sql .= " WHERE rowid = ".((int) $meme_nom->rowid);
+			if (!$this->db->query($sql)) {
+				$this->error = $langs->transnoentities('TiBilletErreurDolibarr', $this->db->lasterror());
+				return -1;
+			}
+			return (int) $meme_nom->rowid;
 		}
 
 		$categorie = new Categorie($this->db);
