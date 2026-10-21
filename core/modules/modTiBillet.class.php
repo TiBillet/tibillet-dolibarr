@@ -64,7 +64,7 @@ class modTiBillet extends DolibarrModules
 		$this->descriptionlong = "TiBilletDescription";
 		$this->editor_name = 'Cooperative TiBillet';
 		$this->editor_url = 'https://tibillet.coop';
-		$this->version = '0.4.0';
+		$this->version = '0.5.0';
 		$this->const_name = 'MAIN_MODULE_'.strtoupper($this->name);
 		// « tibillet@tibillet » : Dolibarr lit img/object_tibillet.png dans ce module
 		// (le logo carré « tiB » de TiBillet, 64 x 64).
