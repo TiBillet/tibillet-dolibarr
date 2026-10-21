@@ -838,7 +838,7 @@ verifier($compte_apres === 'ESSAI', '22 bis. Un compte de TVA posé à la main r
 $id_caisse = $reglages->banquePourLeCompte('530000', $user);
 $banque = new Account($db);
 $banque->fetch($id_caisse);
-verifier($id_caisse > 0 && (int) $banque->type === Account::TYPE_CASH && $banque->account_number === '53', '23. Banque de la caisse : type caisse, compte 53');
+verifier($id_caisse > 0 && (int) $banque->type === Account::TYPE_CASH && $banque->account_number === appelerMethodePrivee($reglages, 'numeroDeCompteDolibarr', array('530000')), '23. Banque de la caisse : type caisse, compte 530000 sous la forme Dolibarr ('.$banque->account_number.')');
 verifier($reglages->banquePourLeCompte('530000', $user) === $id_caisse, '23. Second appel : la même banque');
 // 23 bis. Sans le lien enregistre, la banque qui porte deja ce compte est retrouvee,
 // pas recreee. / Without the saved link, the bank holding the account is found again.
@@ -848,7 +848,17 @@ $id_retrouve = $reglages->banquePourLeCompte('530000', $user);
 verifier($id_retrouve === $id_caisse && compter($db, 'bank_account') === $banques_avant, '23 bis. Lien effacé : la banque du compte 53 est retrouvée, aucune banque créée');
 
 // 24. Les codes de paiement (D22) / Payment codes
-verifier($reglages->idDuCodeDePaiement('LE', false) === (int) dol_getIdFromCode($db, 'TIB', 'c_paiement', 'code', 'id', 1) && (int) dol_getIdFromCode($db, 'TIB', 'c_paiement', 'code', 'id', 1) > 0, '24. Monnaie locale → code TIB, créé et actif');
+// Un code par type de monnaie, cree et actif ; le FED n'est pas VAD.
+// / One code per currency type, created and active; FED is not VAD.
+$codes_des_monnaies_justes = true;
+foreach (array('LE' => 'TIBL', 'LG' => 'TIBG', 'SF' => 'TIBF') as $moyen_de_la_monnaie => $code_attendu) {
+	$id_rendu = $reglages->idDuCodeDePaiement($moyen_de_la_monnaie, false);
+	if ($id_rendu <= 0 || $id_rendu !== (int) dol_getIdFromCode($db, $code_attendu, 'c_paiement', 'code', 'id', 1)) {
+		$codes_des_monnaies_justes = false;
+	}
+}
+verifier($codes_des_monnaies_justes, '24. Monnaie locale → TIBL, monnaie cadeau → TIBG, FED → TIBF : créés et actifs');
+verifier($reglages->idDuCodeDePaiement('UK', false) === (int) dol_getIdFromCode($db, 'TIB', 'c_paiement', 'code', 'id', 1) && (int) dol_getIdFromCode($db, 'TIB', 'c_paiement', 'code', 'id', 1) > 0, '24. Un autre moyen → TIB');
 verifier($reglages->idDuCodeDePaiement('SN', false) === (int) dol_getIdFromCode($db, 'VAD', 'c_paiement', 'code', 'id', 1), '24. Stripe → VAD, actif');
 verifier($reglages->idDuCodeDePaiement('CA', false) === (int) dol_getIdFromCode($db, 'LIQ', 'c_paiement', 'code', 'id', 1) && $reglages->idDuCodeDePaiement('CC', true) === (int) dol_getIdFromCode($db, 'LIQ', 'c_paiement', 'code', 'id', 1), '24. Espèces → LIQ ; toute banque de caisse → LIQ');
 
@@ -912,7 +922,7 @@ verifier(count($paiements_1) === 1 && $paiements_1[0]['type'] === 'LIQ' && $banq
 
 $facture_2 = factureDeLaVenteImitee($db, 2);
 verifier($facture_2 && round((float) $facture_2->total_ttc, 2) === 5.0 && (int) $facture_2->socid === $id_de_passage, '28. Bière + recharge : facture de 5,00 au client de passage');
-verifier(lignesDeBanque($db, 'Essai recharge '.$numero_de_cloture, $premiere_ligne_de_banque) === array(array('4191', -10.0), array('5121', 10.0)), '28. La recharge : un virement de 10,00 de la banque 4191 vers la banque 512100');
+verifier(lignesDeBanque($db, 'Essai recharge '.$numero_de_cloture, $premiere_ligne_de_banque) === array(array(appelerMethodePrivee($reglages, 'numeroDeCompteDolibarr', array('419100')), -10.0), array(appelerMethodePrivee($reglages, 'numeroDeCompteDolibarr', array('512100')), 10.0)), '28. La recharge : un virement de 10,00 de la banque 419100 vers la banque 512100');
 
 $ligne_3 = $db->fetch_object($db->query("SELECT fk_facture FROM ".$db->prefix()."tibillet_vente_importee WHERE vente_uuid = '".$db->escape(identifiantDuPassage(3))."'"));
 verifier($ligne_3 && $ligne_3->fk_facture === null && factureDeLaVenteImitee($db, 3) === null && count(lignesDeBanque($db, 'Essai recharge seule '.$numero_de_cloture, $premiere_ligne_de_banque)) === 2, '29. Recharge seule : aucune facture, un virement, la vente notée');
@@ -923,7 +933,7 @@ verifier($avoir_4 && (int) $avoir_4->type === Facture::TYPE_CREDIT_NOTE && (int)
 verifier($avoir_5 && (int) $avoir_5->type === Facture::TYPE_CREDIT_NOTE && empty($avoir_5->fk_facture_source), '30 bis. Avoir d\'une vente jamais importée : un avoir seul');
 
 $ligne_divers = $db->fetch_object($db->query("SELECT v.accountancy_code, v.sens, v.amount, ba.account_number FROM ".$db->prefix()."payment_various as v JOIN ".$db->prefix()."bank as b ON b.rowid = v.fk_bank JOIN ".$db->prefix()."bank_account as ba ON ba.rowid = b.fk_account WHERE v.label = '".$db->escape('Essai recharge offerte '.$numero_de_cloture)."'"));
-verifier($ligne_divers && $ligne_divers->accountancy_code === '6234' && (int) $ligne_divers->sens === 0 && round((float) $ligne_divers->amount, 2) === 10.0 && $ligne_divers->account_number === '4191', '34. Recharge offerte : paiement divers en sortie de 10,00 sur la banque 4191, contrepartie 6234');
+verifier($ligne_divers && $ligne_divers->accountancy_code === appelerMethodePrivee($reglages, 'numeroDeCompteDolibarr', array('623400')) && (int) $ligne_divers->sens === 0 && round((float) $ligne_divers->amount, 2) === 10.0 && $ligne_divers->account_number === appelerMethodePrivee($reglages, 'numeroDeCompteDolibarr', array('419100')), '34. Recharge offerte : paiement divers en sortie de 10,00 sur la banque 419100, contrepartie 623400');
 
 $facture_7 = factureDeLaVenteImitee($db, 7);
 verifier($facture_7 && round((float) $facture_7->total_ttc, 2) === 4.5 && (float) $facture_7->lines[0]->qty === 1.0 && strpos($facture_7->lines[0]->desc, '×') !== false, '27 bis. Quantité × prix hors du total : une ligne de quantité 1 à 4,50, la quantité dans le libellé');

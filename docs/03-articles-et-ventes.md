@@ -64,7 +64,8 @@ droits de la clé, puis
 **prépare Dolibarr** et dit ce qu'il a fait :
 
 - il active les **modes de paiement** dont il a besoin (`VAD` pour Stripe) et crée
-  « Monnaie TiBillet » (`TIB`) ;
+  un mode par type de monnaie : monnaie locale (`TIBL`), monnaie cadeau (`TIBG`),
+  FED (`TIBF`), et `TIB` pour tout autre moyen ;
 - il crée le **client de passage**.
 
 S'il manque quelque chose qu'il ne doit pas régler à votre place (une option de

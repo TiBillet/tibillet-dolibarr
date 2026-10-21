@@ -33,9 +33,12 @@ class ReglagesTiBillet extends ImportTiBillet
 	const REF_EXT_CLIENT_DE_PASSAGE = 'tibillet:client-de-passage';
 
 	/**
-	 * Le code de paiement Dolibarr de chaque moyen TiBillet (D22). Tout autre moyen
-	 * (monnaie locale, jetons, Stripe federe…) prend le code « TIB », cree par le module.
-	 * / Dolibarr payment code of each TiBillet method; anything else is "TIB".
+	 * Le code de paiement Dolibarr de chaque moyen TiBillet (D22). Chaque type de
+	 * monnaie TiBillet a son code, cree par le module : monnaie locale en euros (TIBL),
+	 * monnaie cadeau (TIBG), FED (TIBF). Le FED n'est pas VAD : ce sont des jetons
+	 * depenses chez le lieu, pas un paiement par carte. Tout autre moyen prend « TIB ».
+	 * / Dolibarr payment code of each TiBillet method; one code per currency type,
+	 * anything else is "TIB".
 	 */
 	const CODE_PAR_MOYEN = array(
 		'CA' => 'LIQ',
@@ -45,10 +48,24 @@ class ReglagesTiBillet extends ImportTiBillet
 		'SN' => 'VAD',
 		'SP' => 'VAD',
 		'SR' => 'VAD',
+		'LE' => 'TIBL',
+		'LG' => 'TIBG',
+		'SF' => 'TIBF',
 	);
 
-	/** Le code des monnaies TiBillet / TiBillet currencies' payment code */
-	const CODE_DES_MONNAIES = 'TIB';
+	/** Le code des autres moyens TiBillet / Code of any other TiBillet method */
+	const CODE_DES_AUTRES_MOYENS = 'TIB';
+
+	/**
+	 * Le libelle (cle de traduction) des codes que le module cree.
+	 * / Label (translation key) of the codes the module creates.
+	 */
+	const LIBELLE_PAR_CODE_CREE = array(
+		'TIBL' => 'TiBilletLibelleDuCodeTibl',
+		'TIBG' => 'TiBilletLibelleDuCodeTibg',
+		'TIBF' => 'TiBilletLibelleDuCodeTibf',
+		'TIB' => 'TiBilletLibelleDuCodeTib',
+	);
 
 	/** @var string[] Ce que le module a regle / What the module set */
 	public $faits = array();
@@ -164,8 +181,8 @@ class ReglagesTiBillet extends ImportTiBillet
 
 	/**
 	 * L'id du code de paiement Dolibarr d'un moyen TiBillet (D22). Une banque de
-	 * caisse n'accepte que les especes : toujours LIQ. Le code VAD est active et le
-	 * code TIB cree au premier besoin.
+	 * caisse n'accepte que les especes : toujours LIQ. Le code VAD est active et les
+	 * codes TIBL, TIBG, TIBF, TIB crees au premier besoin.
 	 * / The Dolibarr payment code id of a TiBillet method; a cash bank only takes LIQ.
 	 *
 	 * @param string|null $moyen_tibillet         Le code TiBillet (CA, CC, LE…) ou null
@@ -178,7 +195,7 @@ class ReglagesTiBillet extends ImportTiBillet
 	}
 
 	/**
-	 * Le code de paiement Dolibarr (LIQ, CB, VAD, TIB…) d'un moyen TiBillet.
+	 * Le code de paiement Dolibarr (LIQ, CB, VAD, TIBL…) d'un moyen TiBillet.
 	 * / The Dolibarr payment code of a TiBillet method.
 	 */
 	public function codeDePaiement($moyen_tibillet, $banque_est_une_caisse)
@@ -187,7 +204,7 @@ class ReglagesTiBillet extends ImportTiBillet
 			return 'LIQ';
 		}
 		$codes = self::CODE_PAR_MOYEN;
-		return isset($codes[(string) $moyen_tibillet]) ? $codes[(string) $moyen_tibillet] : self::CODE_DES_MONNAIES;
+		return isset($codes[(string) $moyen_tibillet]) ? $codes[(string) $moyen_tibillet] : self::CODE_DES_AUTRES_MOYENS;
 	}
 
 	/**
@@ -286,7 +303,7 @@ class ReglagesTiBillet extends ImportTiBillet
 
 	/**
 	 * L'id d'un code de paiement de llx_c_paiement : active s'il est inactif, cree
-	 * s'il manque (le code TIB). Garde en memoire pour le passage.
+	 * s'il manque (les codes TIB…). Garde en memoire pour le passage.
 	 * / A payment code id: enabled if inactive, created if missing.
 	 */
 	private function idDuCode($code)
@@ -309,10 +326,12 @@ class ReglagesTiBillet extends ImportTiBillet
 			return (int) $ligne->id;
 		}
 
-		// Le code TIB : « type 2 » = pour les clients et les fournisseurs.
-		// / The TIB code: type 2 = customers and suppliers.
+		// Un code du module (TIBL, TIBG, TIBF, TIB) : « type 2 » = pour les clients et
+		// les fournisseurs.
+		// / A module code: type 2 = customers and suppliers.
+		$cle_du_libelle = self::LIBELLE_PAR_CODE_CREE[$code] ?? 'TiBilletLibelleDuCodeTib';
 		$sql = "INSERT INTO ".$this->db->prefix()."c_paiement (entity, code, libelle, type, active, position)";
-		$sql .= " VALUES (".((int) $this->entity).", '".$this->db->escape($code)."', '".$this->db->escape($langs->transnoentities('TiBilletLibelleDuCodeTib'))."', 2, 1, 0)";
+		$sql .= " VALUES (".((int) $this->entity).", '".$this->db->escape($code)."', '".$this->db->escape($langs->transnoentities($cle_du_libelle))."', 2, 1, 0)";
 		if (!$this->db->query($sql)) {
 			$this->error = $langs->transnoentities('TiBilletErreurDolibarr', $this->db->lasterror());
 			return -1;

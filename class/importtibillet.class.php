@@ -783,7 +783,12 @@ class ImportTiBillet
 	/**
 	 * Le numero d'un compte sous la forme Dolibarr : sans les zeros de droite (707000
 	 * devient 707), sauf si ACCOUNTING_MANAGE_ZERO est active.
+	 * Dolibarr applique la meme regle au compte d'un produit (Product::create et
+	 * update, meme sans comptabilite) : un autre format ferait reecrire tous les
+	 * produits a chaque passage du catalogue. Pour garder 6 chiffres partout, le lieu
+	 * allume ACCOUNTING_MANAGE_ZERO.
 	 * / Account number the Dolibarr way: trailing zeros removed unless MANAGE_ZERO.
+	 * Dolibarr does the same on products.
 	 */
 	protected function numeroDeCompteDolibarr($numero)
 	{

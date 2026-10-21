@@ -81,7 +81,7 @@ il explique les mots « compte », « journal », « débit » et « crédit ».
   comptes généraux, ni journaux) : le module « Comptabilité (partie double) » peut
   rester éteint. Le compte de vente voyage seulement sur le produit.
 - **Ce que le module règle lui-même** dans Dolibarr, et dit : codes de paiement
-  (`VAD`, `TIB`), compte de TVA de chaque taux s'il est vide, banques, client de
+  (`VAD`, `TIBL`, `TIBG`, `TIBF`, `TIB`), compte de TVA de chaque taux s'il est vide, banques, client de
   passage. **Ce qu'il signale
   seulement** (l'import ne démarre pas) : un module inactif, les options
   `FAC_FORCE_DATE_VALIDATION`, `INVOICE_CHECK_POSTERIOR_DATE` ou
