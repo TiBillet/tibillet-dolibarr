@@ -309,6 +309,9 @@ class VentesTiBillet extends ImportTiBillet
 		$facture->date = $date_de_la_j;
 		$facture->type = $est_un_avoir ? Facture::TYPE_CREDIT_NOTE : Facture::TYPE_STANDARD;
 		$facture->ref_ext = $vente['identifier'];
+		// Comme TakePOS ('takepos') : la colonne « Module POS (PDV) » de la liste des factures.
+		// / Like TakePOS: the "POS module" column of the invoice list.
+		$facture->module_source = 'tibillet';
 		$facture->note_private = $langs->transnoentities('TiBilletNoteDeLaFacture', $vente['orderNumber']);
 		if ($est_un_avoir && !empty($vente['relatedSale']['identifier'])) {
 			$id_de_la_facture_d_origine = $this->factureDeLaVente($vente['relatedSale']['identifier']);
@@ -603,7 +606,7 @@ class VentesTiBillet extends ImportTiBillet
 	/** La banque (Account charge) d'un compte de tresorerie, ou null / The bank, or null */
 	private function banqueDuCompte($numero_tibillet, $user)
 	{
-		$id_de_la_banque = $this->reglages->banquePourLeCompte($numero_tibillet, $user);
+		$id_de_la_banque = $this->reglages->banquePourLeCompte($numero_tibillet);
 		if ($id_de_la_banque <= 0) {
 			$this->error = $this->reglages->error;
 			return null;

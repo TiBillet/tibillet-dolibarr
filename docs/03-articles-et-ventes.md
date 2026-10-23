@@ -66,7 +66,9 @@ droits de la clé, puis
 - il active les **modes de paiement** dont il a besoin (`VAD` pour Stripe) et crée
   un mode par type de monnaie : monnaie locale (`TIBL`), monnaie cadeau (`TIBG`),
   FED (`TIBF`), et `TIB` pour tout autre moyen ;
-- il crée le **client de passage**.
+- il crée le **client de passage** ;
+- il vérifie que chaque **compte de trésorerie** de TiBillet a sa **banque** dans
+  Dolibarr (voir « Les banques » plus bas).
 
 S'il manque quelque chose qu'il ne doit pas régler à votre place (une option de
 Dolibarr, un droit), il le **dit** et l'import ne démarre pas tant que ce n'est pas
@@ -99,13 +101,24 @@ celui du **produit** (fiche produit → onglet Comptabilité).
 
 ### Les banques et le client de passage
 
-Chaque compte de trésorerie de TiBillet (caisse 530, CB 512, Stripe 517, monnaie locale
-4191…) a sa **banque** dans Dolibarr, créée au premier paiement. Sur la page du module,
-section **Banques et client de passage**, vous pouvez relier un compte à une autre
-banque. Une banque de type **caisse** n'accepte que les espèces : la page refuse de la
-choisir pour un autre compte.
+Chaque compte de trésorerie de TiBillet (caisse 530000, CB 512100, Stripe 517100,
+monnaie locale 419100…) doit avoir sa **banque** dans Dolibarr. Le module retient la
+banque qui porte **le même numéro** de compte comptable : les zéros de droite ne
+comptent pas, 530000, 5300 et 53 sont le même compte. **Il ne crée aucune banque.**
 
-![Les banques créées par le module (une par compte de trésorerie), et le client de passage.](images/doli-20-banques.jpg)
+S'il en manque une, **Tester la connexion**, **Synchroniser le catalogue** et
+**Importer les ventes** s'arrêtent et nomment le compte. Deux façons de régler :
+
+- créer la banque dans Dolibarr (Banque / Caisse → Nouveau compte), avec ce numéro
+  dans « Compte comptable » ;
+- ou la relier à une banque existante sur la page du module, section **Banques et
+  client de passage**. Le tableau montre chaque compte de TiBillet, avec son libellé,
+  et la banque retenue ; « — à relier — » signale un compte sans banque.
+
+Une banque de type **caisse** n'accepte que les espèces : la page refuse de la choisir
+pour un autre compte que 53.
+
+![Les banques de chaque compte de trésorerie, et le client de passage.](images/doli-20-banques.jpg)
 
 ## 6. La comptabilité dans Dolibarr
 

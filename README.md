@@ -66,8 +66,9 @@ il explique les mots « compte », « journal », « débit » et « crédit ».
     produit ;
   - le **tiers** : l'acheteur, retrouvé par son **e-mail** (créé s'il manque, l'e-mail
     comme nom), sinon le **client de passage** (comme la caisse TakePOS) ;
-  - une **banque Dolibarr par compte de trésorerie** de TiBillet (caisse, CB, Stripe,
-    monnaie locale…), créée au premier paiement, modifiable sur la page ;
+  - le paiement va dans la **banque Dolibarr de son compte de trésorerie** TiBillet
+    (caisse, CB, Stripe, monnaie locale…) : la banque qui porte le même numéro de
+    compte comptable, ou celle choisie sur la page. Le module n'en crée aucune ;
   - les **recharges** et **vidages** de carte en **virements internes** ; la recharge
     offerte, les jetons repris et les écarts d'encaissement en **paiements divers** ;
   - date des factures et des paiements = la date de la journée, comme le FEC.
@@ -81,9 +82,10 @@ il explique les mots « compte », « journal », « débit » et « crédit ».
   comptes généraux, ni journaux) : le module « Comptabilité (partie double) » peut
   rester éteint. Le compte de vente voyage seulement sur le produit.
 - **Ce que le module règle lui-même** dans Dolibarr, et dit : codes de paiement
-  (`VAD`, `TIBL`, `TIBG`, `TIBF`, `TIB`), compte de TVA de chaque taux s'il est vide, banques, client de
+  (`VAD`, `TIBL`, `TIBG`, `TIBF`, `TIB`), compte de TVA de chaque taux s'il est vide, client de
   passage. **Ce qu'il signale
-  seulement** (l'import ne démarre pas) : un module inactif, les options
+  seulement** (l'import ne démarre pas) : un compte de trésorerie de TiBillet sans
+  banque dans Dolibarr (aussi vérifié par la synchro du catalogue), un module inactif, les options
   `FAC_FORCE_DATE_VALIDATION`, `INVOICE_CHECK_POSTERIOR_DATE` ou
   `STOCK_CALCULATE_ON_BILL` allumées, un utilisateur sans droit de créer des factures.
   « Tester la connexion » montre les deux listes.
@@ -151,8 +153,13 @@ GPL v3 ou plus (voir `COPYING`). Développé par la coopérative TiBillet.
 ### Essai automatique (instance de TEST seulement : il écrit et efface)
 
 ```bash
-php /var/www/html/custom/tibillet/scripts/essai.php
+php /var/www/html/custom/tibillet/scripts/essai.php             # mode « articles et ventes » seul
+php /var/www/html/custom/tibillet/scripts/essai.php ecritures   # + mode « écritures »
 ```
+
+Sans argument, seuls les essais du mode « articles et ventes » tournent. Les essais du
+mode « écritures » (1 à 7, 12, 35, 35 bis, 37, le refus de l'essai 38) demandent
+l'argument `ecritures`, la comptabilité en partie double et des clôtures chez TiBillet.
 
 Il vérifie : l'import, l'égalité grand livre = TiBillet compte par compte, aucune ligne
 validée, pas de doublon au second passage, le réimport, le « tout ou rien », le mode

@@ -15,8 +15,8 @@
  *          / Prepares Dolibarr for TiBillet's sales.
  *
  * Le module regle lui-meme ce qui manque et le dit ($faits). Ce qu'il ne doit pas
- * changer a la place du lieu (une option du lieu, un droit) est seulement signale
- * ($manques) : l'import ne demarre pas tant qu'il reste un manque.
+ * changer a la place du lieu (une option du lieu, un droit, une banque) est seulement
+ * signale ($manques) : l'import ne demarre pas tant qu'il reste un manque.
  * Spec : depot Lespass, TECH_DOC/SESSIONS/COMPTABILITE/CHANTIER-06-connecteurs-
  * comptables/CHANTIER-06-D-ventes.md (D11, D20-D22, Q8, Q10).
  * / The module sets what is missing and says so; what belongs to the venue is only
@@ -78,7 +78,8 @@ class ReglagesTiBillet extends ImportTiBillet
 
 	/**
 	 * Verifie Dolibarr avant un import des ventes, et regle ce que le module peut
-	 * regler (client de passage). Rien de la comptabilite de Dolibarr : ni comptes
+	 * regler (client de passage). Chaque compte de tresorerie de TiBillet doit avoir
+	 * sa banque (verifierLesBanques). Rien de la comptabilite de Dolibarr : ni comptes
 	 * generaux, ni journaux.
 	 * / Checks Dolibarr before a sales import and sets what the module can set; never
 	 * Dolibarr's accounting.
@@ -94,7 +95,7 @@ class ReglagesTiBillet extends ImportTiBillet
 		// Les modules de Dolibarr. La page du module les active au passage en mode
 		// « articles et ventes » ; une tache planifiee ne le fait pas.
 		// / Dolibarr modules: the module page enables them, a cron job does not.
-		foreach (array('facture' => 'Factures', 'societe' => 'Tiers', 'banque' => 'Banques') as $module => $nom) {
+		foreach (array('facture' => 'Factures', 'societe' => 'Tiers') as $module => $nom) {
 			if (!isModEnabled($module)) {
 				$this->manques[] = $langs->transnoentities('TiBilletModuleInactif', $nom);
 			}
@@ -118,22 +119,86 @@ class ReglagesTiBillet extends ImportTiBillet
 			$this->manques[] = $this->error;
 		}
 
+		$this->verifierLesBanques();
+
 		return empty($this->manques) ? 0 : -1;
 	}
 
 	/**
+	 * Chaque compte de tresorerie de TiBillet a-t-il sa banque dans Dolibarr ? Le
+	 * module n'en cree jamais : un compte sans banque est un manque, que le lieu regle
+	 * en creant la banque ou en la reliant sur la page du module. Appele par les trois
+	 * boutons (tester, catalogue, ventes) et par la tache de nuit.
+	 * / Does each TiBillet treasury account have its bank? The module never creates
+	 * one: a missing bank is reported.
+	 *
+	 * @return int 0 si chaque compte a sa banque, -1 sinon (voir $this->manques)
+	 */
+	public function verifierLesBanques()
+	{
+		global $langs;
+		$langs->loadLangs(array('tibillet@tibillet'));
+
+		if (!isModEnabled('banque')) {
+			$this->manques[] = $langs->transnoentities('TiBilletModuleInactif', 'Banques');
+			return -1;
+		}
+		$comptes_de_tresorerie = $this->comptesDeTresorerie();
+		if ($comptes_de_tresorerie === null) {
+			$this->manques[] = $this->error;
+			return -1;
+		}
+		$il_manque_une_banque = false;
+		foreach ($comptes_de_tresorerie as $numero_tibillet => $libelle_tibillet) {
+			if ($this->banquePourLeCompte($numero_tibillet) <= 0) {
+				$this->manques[] = $langs->transnoentities('TiBilletCompteSansBanque', $numero_tibillet.' « '.$libelle_tibillet.' »');
+				$il_manque_une_banque = true;
+			}
+		}
+		return $il_manque_une_banque ? -1 : 0;
+	}
+
+	/**
+	 * Les comptes de tresorerie de TiBillet : ceux ou l'argent d'une vente arrive
+	 * (caisse, CB, Stripe, monnaies, avances des clients), marques `treasury` dans le
+	 * plan de TiBillet.
+	 * / TiBillet's treasury accounts, flagged `treasury` in its chart.
+	 *
+	 * @return array<string,string>|null numero TiBillet => libelle, ou null (voir $this->error)
+	 */
+	public function comptesDeTresorerie()
+	{
+		$reponse = $this->appelerTiBillet('/api/v2/accounts/');
+		if ($reponse['code'] != 200 || !isset($reponse['donnees']['results']) || !is_array($reponse['donnees']['results'])) {
+			$this->error = $this->phraseDuRefus($reponse);
+			return null;
+		}
+		$comptes_de_tresorerie = array();
+		foreach ($reponse['donnees']['results'] as $compte_tibillet) {
+			if (!empty($compte_tibillet['treasury'])) {
+				$comptes_de_tresorerie[(string) $compte_tibillet['accountNumber']] = (string) $compte_tibillet['name'];
+			}
+		}
+		return $comptes_de_tresorerie;
+	}
+
+	/**
 	 * La banque Dolibarr d'un compte de tresorerie TiBillet (D11) : celle que le lieu a
-	 * choisie (constante TIBILLET_BANQUE_<numero>), sinon une banque qui porte deja ce
-	 * compte, sinon une banque creee par le module. Le compte 53x est une caisse.
-	 * / The Dolibarr bank of a TiBillet treasury account: chosen, found, or created.
+	 * choisie sur la page du module (constante TIBILLET_BANQUE_<numero>), sinon la
+	 * banque ouverte qui porte le meme numero de compte. Les zeros de droite ne
+	 * comptent pas : 530000, 5300 et 53 sont le meme compte. Une banque de caisse
+	 * n'accepte que les especes : jamais retenue pour un autre compte que 53x. Le
+	 * module ne cree jamais de banque.
+	 * / The Dolibarr bank of a TiBillet treasury account: chosen, or the open bank with
+	 * the same account number (trailing zeros ignored). Never created.
 	 *
 	 * @param string $numero_tibillet Le numero TiBillet (ex. 530000)
-	 * @param User   $user            Auteur
 	 * @return int rowid de llx_bank_account, ou -1 (voir $this->error)
 	 */
-	public function banquePourLeCompte($numero_tibillet, $user)
+	public function banquePourLeCompte($numero_tibillet)
 	{
-		global $conf, $langs, $mysoc;
+		global $langs;
+		$langs->loadLangs(array('tibillet@tibillet'));
 
 		$nom_du_lien = 'TIBILLET_BANQUE_'.preg_replace('/[^0-9A-Za-z]/', '', (string) $numero_tibillet);
 		$id_choisi = getDolGlobalInt($nom_du_lien);
@@ -144,39 +209,22 @@ class ReglagesTiBillet extends ImportTiBillet
 			}
 		}
 
-		$numero_dolibarr = $this->numeroDeCompteDolibarr($numero_tibillet);
+		$numero_sans_zeros = rtrim(trim((string) $numero_tibillet), '0');
 		$sql = "SELECT rowid FROM ".$this->db->prefix()."bank_account";
-		$sql .= " WHERE account_number = '".$this->db->escape($numero_dolibarr)."'";
+		$sql .= " WHERE TRIM(TRAILING '0' FROM TRIM(account_number)) = '".$this->db->escape($numero_sans_zeros)."'";
 		$sql .= " AND clos = 0 AND entity IN (".getEntity('bank_account').")";
+		if (strpos((string) $numero_tibillet, '53') !== 0) {
+			$sql .= " AND courant <> ".((int) Account::TYPE_CASH);
+		}
 		$sql .= " ORDER BY rowid ASC";
 		$resql = $this->db->query($sql);
-		$ligne = $resql ? $this->db->fetch_object($resql) : null;
+		$ligne = ($resql && $numero_sans_zeros !== '') ? $this->db->fetch_object($resql) : null;
 		if ($ligne) {
-			dolibarr_set_const($this->db, $nom_du_lien, (int) $ligne->rowid, 'chaine', 0, '', $conf->entity);
 			return (int) $ligne->rowid;
 		}
 
-		$banque = new Account($this->db);
-		$banque->ref = dol_trunc('TIB'.$numero_dolibarr, 12, 'right', 'UTF-8', 1);
-		// Le libelle d'une banque fait 30 caracteres au plus. Le lieu peut le renommer
-		// dans Dolibarr : le lien passe par TIBILLET_BANQUE_<numero>, pas par le libelle.
-		// / Bank labels are 30 chars max; the venue may rename it.
-		$banque->label = dol_trunc('TiBillet '.$numero_tibillet, 30, 'right', 'UTF-8', 1);
-		$banque->type = (strpos((string) $numero_tibillet, '53') === 0) ? Account::TYPE_CASH : Account::TYPE_CURRENT;
-		$banque->courant = $banque->type;
-		$banque->country_id = $mysoc->country_id;
-		$banque->currency_code = $conf->currency;
-		$banque->date_solde = dol_now();
-		$banque->account_number = $numero_dolibarr;
-		$banque->rappro = ($banque->type == Account::TYPE_CASH) ? 0 : 1;
-		$id_banque = $banque->create($user);
-		if ($id_banque <= 0) {
-			$this->error = $langs->transnoentities('TiBilletErreurDolibarr', $banque->error.' '.implode(' ', (array) $banque->errors));
-			return -1;
-		}
-		dolibarr_set_const($this->db, $nom_du_lien, $id_banque, 'chaine', 0, '', $conf->entity);
-		$this->faits[] = $langs->transnoentities('TiBilletBanqueCreee', $banque->label);
-		return $id_banque;
+		$this->error = $langs->transnoentities('TiBilletCompteSansBanque', $numero_tibillet);
+		return -1;
 	}
 
 	/**

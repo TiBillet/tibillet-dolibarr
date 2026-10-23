@@ -7,10 +7,13 @@
  *
  * A LANCER DANS LE CONTENEUR DOLIBARR, sur une instance de TEST (il ecrit et efface
  * dans le grand livre) :
- *     php /var/www/html/custom/tibillet/scripts/essai.php
- * Prerequis : module active, « Comptabilite (partie double) » active (essais du mode
- * ecritures), reglages remplis (adresse, cle, mode dev), un exercice
+ *     php /var/www/html/custom/tibillet/scripts/essai.php             (mode « ventes » seul)
+ *     php /var/www/html/custom/tibillet/scripts/essai.php ecritures   (+ mode « ecritures »)
+ * Prerequis : module active, reglages remplis (adresse, cle, mode dev). Avec
+ * « ecritures » en plus : « Comptabilite (partie double) » active, un exercice
  * ouvert, et chez TiBillet au moins une cloture J avec deux journaux (ex. BAR + WEB).
+ * Chaque compte de tresorerie de TiBillet a sa banque dans Dolibarr (le module n'en
+ * cree aucune) : sinon les essais du catalogue et des ventes echouent, et le disent.
  *
  * CE QUI EST VERIFIE :
  * 1. Import : un passage importe les clotures de TiBillet (ou il n'y a plus rien a
@@ -35,7 +38,8 @@
  * 15. Collision de ref « TIB-… » : erreur notee, produit du lieu intact, ETag non garde.
  * 15 bis. Categorie recreee chez TiBillet (meme nom, nouvel identifiant) : reprise.
  * 22 a 34. Les ventes (06-D), avec une reponse de TiBillet IMITEE pour les clotures et
- *    les ventes : reglages, banques, codes de paiement, tiers par e-mail, factures
+ *    les ventes : reglages, banques (retrouvees par leur numero, jamais creees ; un
+ *    compte sans banque est un manque), codes de paiement, tiers par e-mail, factures
  *    payees sans lien comptable, virements, avoirs, paiement divers, centime faux
  *    refuse, second passage, limite par passage.
  * 38. Comptabilite en partie double eteinte (en memoire) : les ventes arrivent quand
@@ -168,107 +172,116 @@ function cloturesImportees($db)
 	return $clotures;
 }
 
+// Les essais du mode « ecritures » (1 a 7, 12, 35, 35 bis, 37, et le refus de l'essai
+// 38) ne tournent qu'avec l'argument « ecritures » : ils demandent la comptabilite en
+// partie double et des clotures chez TiBillet. Sans argument : le mode « ventes » seul.
+// / Entries-mode checks only run with the "ecritures" argument.
+$avec_les_ecritures = in_array('ecritures', array_slice($argv, 1), true);
+echo ($avec_les_ecritures ? 'Modes « ecritures » et « ventes »' : 'Mode « ventes » seul (argument « ecritures » pour le grand livre)')."\n";
+
 // Les essais 1 a 6 tournent en mode « ecritures », quel que soit le mode laisse par un
 // essai precedent interrompu ; le mode d'origine est remis a la fin.
 // / Checks 1-6 run in entries mode; the original mode is restored at the end.
 $mode_d_origine = getDolGlobalString('TIBILLET_MODE');
-dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_ECRITURES, 'chaine', 0, '', $conf->entity);
+dolibarr_set_const($db, 'TIBILLET_MODE', ($avec_les_ecritures ? ImportTiBillet::MODE_ECRITURES : ImportTiBillet::MODE_VENTES), 'chaine', 0, '', $conf->entity);
 
 $import = new ImportTiBillet($db);
 
-// 1. Import / Import
-$retour = $import->importerLesClotures();
-verifier($retour === 0, "1. Un passage d'import sans erreur (".$import->output.($import->error ? ' / '.$import->error : '').")");
-$clotures = cloturesImportees($db);
-verifier(count($clotures) > 0, '1. Au moins une clôture importée ('.count($clotures).')');
+if ($avec_les_ecritures) {
+	// 1. Import / Import
+	$retour = $import->importerLesClotures();
+	verifier($retour === 0, "1. Un passage d'import sans erreur (".$import->output.($import->error ? ' / '.$import->error : '').")");
+	$clotures = cloturesImportees($db);
+	verifier(count($clotures) > 0, '1. Au moins une clôture importée ('.count($clotures).')');
 
-// 2. Coherence / Consistency
-foreach ($clotures as $cloture) {
-	$attendu = soldesDeTiBillet($import, $cloture->cloture_uuid);
-	$obtenu = soldesDuGrandLivre($db, $cloture->pieces);
-	verifier($attendu !== null && $attendu === $obtenu, '2. Clôture n° '.$cloture->numero.' : grand livre = TiBillet, compte par compte ('.count($obtenu).' comptes)');
-}
-
-// 3. Non validees / Not validated
-verifier(nombreDeLignes($db, ' AND date_validated IS NOT NULL') === 0, '3. Aucune ligne TiBillet validée ('.nombreDeLignes($db).' lignes)');
-
-// 4. Pas de doublon / No duplicate
-$lignes_avant = nombreDeLignes($db);
-$retour = $import->importerLesClotures();
-verifier($retour === 0 && nombreDeLignes($db) === $lignes_avant, '4. Second passage : rien de réécrit ('.$lignes_avant.' lignes)');
-
-// 5. Reimporter la derniere cloture / Re-import the last closure
-$derniere = end($clotures);
-$soldes_avant = soldesDuGrandLivre($db, $derniere->pieces);
-$lignes_avant_reimport = identifiantsDesLignes($db, $derniere->pieces);
-$retour = $import->reimporterUneCloture((int) $derniere->rowid);
-$derniere_apres = null;
-foreach (cloturesImportees($db) as $cloture) {
-	if ($cloture->rowid == $derniere->rowid) {
-		$derniere_apres = $cloture;
+	// 2. Coherence / Consistency
+	foreach ($clotures as $cloture) {
+		$attendu = soldesDeTiBillet($import, $cloture->cloture_uuid);
+		$obtenu = soldesDuGrandLivre($db, $cloture->pieces);
+		verifier($attendu !== null && $attendu === $obtenu, '2. Clôture n° '.$cloture->numero.' : grand livre = TiBillet, compte par compte ('.count($obtenu).' comptes)');
 	}
-}
-verifier($retour === 1 && $derniere_apres !== null, '5. Réimport de la clôture n° '.$derniere->numero.($import->error ? ' ('.$import->error.')' : ''));
-if ($derniere_apres !== null) {
-	// Les numeros de piece peuvent revenir les memes (Dolibarr reprend le plus grand
-	// numero + 1, et les pieces retirees etaient les dernieres) : on verifie que les
-	// LIGNES ont ete reecrites. / Lines must be rewritten (piece numbers may repeat).
-	$lignes_apres_reimport = identifiantsDesLignes($db, $derniere_apres->pieces);
-	verifier(count(array_intersect($lignes_avant_reimport, $lignes_apres_reimport)) === 0 && count($lignes_apres_reimport) === count($lignes_avant_reimport), '5. Lignes réécrites ('.count($lignes_apres_reimport).' lignes, pièces '.$derniere_apres->pieces.')');
-	verifier(soldesDuGrandLivre($db, $derniere_apres->pieces) === $soldes_avant, '5. Mêmes montants, compte par compte');
-	verifier(nombreDeLignes($db) === $lignes_avant, '5. Même nombre de lignes au total');
-	$derniere = $derniere_apres;
-}
 
-// 6. Tout ou rien : une cloture a au moins deux ecritures. On retire sa ligne de la
-// table et les lignes de sa PREMIERE ecriture seulement ; la seconde est encore la :
-// le module ecrit la premiere, bute sur la seconde (deja presente), et doit tout
-// annuler. Puis on remet la cloture en etat.
-// / All or nothing: the 2nd entry is already there, the 1st must not be kept.
-$cloture_a_deux_ecritures = null;
-foreach (cloturesImportees($db) as $cloture) {
-	if (count(explode(',', $cloture->pieces)) >= 2) {
-		$cloture_a_deux_ecritures = $cloture;
+	// 3. Non validees / Not validated
+	verifier(nombreDeLignes($db, ' AND date_validated IS NOT NULL') === 0, '3. Aucune ligne TiBillet validée ('.nombreDeLignes($db).' lignes)');
+
+	// 4. Pas de doublon / No duplicate
+	$lignes_avant = nombreDeLignes($db);
+	$retour = $import->importerLesClotures();
+	verifier($retour === 0 && nombreDeLignes($db) === $lignes_avant, '4. Second passage : rien de réécrit ('.$lignes_avant.' lignes)');
+
+	// 5. Reimporter la derniere cloture / Re-import the last closure
+	$derniere = end($clotures);
+	$soldes_avant = soldesDuGrandLivre($db, $derniere->pieces);
+	$lignes_avant_reimport = identifiantsDesLignes($db, $derniere->pieces);
+	$retour = $import->reimporterUneCloture((int) $derniere->rowid);
+	$derniere_apres = null;
+	foreach (cloturesImportees($db) as $cloture) {
+		if ($cloture->rowid == $derniere->rowid) {
+			$derniere_apres = $cloture;
+		}
 	}
-}
-if ($cloture_a_deux_ecritures === null) {
-	verifier(false, '6. Tout ou rien : aucune clôture importée avec deux écritures (faire une vente en caisse ET une en ligne le même jour)');
-} else {
-	$pieces = explode(',', $cloture_a_deux_ecritures->pieces);
-	$premiere_piece = (int) $pieces[0];
-	$resql = $db->query("SELECT doc_ref FROM ".$db->prefix()."accounting_bookkeeping WHERE piece_num = ".$premiere_piece." LIMIT 1");
-	$reference_de_la_premiere = $db->fetch_object($resql)->doc_ref;
-
-	$db->query("DELETE FROM ".$db->prefix()."accounting_bookkeeping WHERE piece_num = ".$premiere_piece);
-	$db->query("DELETE FROM ".$db->prefix()."tibillet_cloture_importee WHERE rowid = ".((int) $cloture_a_deux_ecritures->rowid));
-
-	$resultat = appelerMethodePrivee($import, 'importerUneCloture', array($cloture_a_deux_ecritures->cloture_uuid, $user, null));
-	$lignes_de_la_premiere = nombreDeLignes($db, " AND doc_ref = '".$db->escape($reference_de_la_premiere)."'");
-	verifier($resultat < 0, '6. Tout ou rien : la clôture n° '.$cloture_a_deux_ecritures->numero.' est refusée ('.$import->error.')');
-	verifier($lignes_de_la_premiere === 0, '6. Tout ou rien : la première écriture ('.$reference_de_la_premiere.') n\'est pas gardée');
-
-	// Remettre en etat : retirer la seconde ecriture, puis reimporter toute la cloture.
-	// / Restore: remove the 2nd entry, then import the whole closure again.
-	foreach (array_slice($pieces, 1) as $piece) {
-		$db->query("DELETE FROM ".$db->prefix()."accounting_bookkeeping WHERE piece_num = ".((int) $piece));
+	verifier($retour === 1 && $derniere_apres !== null, '5. Réimport de la clôture n° '.$derniere->numero.($import->error ? ' ('.$import->error.')' : ''));
+	if ($derniere_apres !== null) {
+		// Les numeros de piece peuvent revenir les memes (Dolibarr reprend le plus grand
+		// numero + 1, et les pieces retirees etaient les dernieres) : on verifie que les
+		// LIGNES ont ete reecrites. / Lines must be rewritten (piece numbers may repeat).
+		$lignes_apres_reimport = identifiantsDesLignes($db, $derniere_apres->pieces);
+		verifier(count(array_intersect($lignes_avant_reimport, $lignes_apres_reimport)) === 0 && count($lignes_apres_reimport) === count($lignes_avant_reimport), '5. Lignes réécrites ('.count($lignes_apres_reimport).' lignes, pièces '.$derniere_apres->pieces.')');
+		verifier(soldesDuGrandLivre($db, $derniere_apres->pieces) === $soldes_avant, '5. Mêmes montants, compte par compte');
+		verifier(nombreDeLignes($db) === $lignes_avant, '5. Même nombre de lignes au total');
+		$derniere = $derniere_apres;
 	}
-	$resultat = appelerMethodePrivee($import, 'importerUneCloture', array($cloture_a_deux_ecritures->cloture_uuid, $user, null));
-	verifier($resultat >= 0 && nombreDeLignes($db) === $lignes_avant, '6. Remise en état de la clôture n° '.$cloture_a_deux_ecritures->numero);
-}
 
-// 7. Mode « articles et ventes » : le module n'ecrit plus rien dans le grand livre,
-// ni par la tache de nuit, ni par « Reimporter ». Puis on remet le mode d'avant.
-// / "Items and sales" mode: nothing is written in the ledger any more.
-dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_VENTES, 'chaine', 0, '', $conf->entity);
-$lignes_avant_mode_ventes = nombreDeLignes($db);
-$import = new ImportTiBillet($db);
-$retour = $import->importerLesClotures();
-verifier($retour === 0 && $import->output === $langs->transnoentities('TiBilletModeVentesRienAImporter'), '7. Mode ventes : la tâche de nuit n\'importe rien ('.$import->output.')');
-$clotures = cloturesImportees($db);
-$derniere = end($clotures);
-$retour = $import->reimporterUneCloture((int) $derniere->rowid);
-verifier($retour === -1 && $import->error === $langs->transnoentities('TiBilletModeVentesPasDeReimport'), '7. Mode ventes : « Réimporter » est refusé ('.$import->error.')');
-verifier(nombreDeLignes($db) === $lignes_avant_mode_ventes, '7. Mode ventes : grand livre inchangé ('.nombreDeLignes($db).' lignes)');
+	// 6. Tout ou rien : une cloture a au moins deux ecritures. On retire sa ligne de la
+	// table et les lignes de sa PREMIERE ecriture seulement ; la seconde est encore la :
+	// le module ecrit la premiere, bute sur la seconde (deja presente), et doit tout
+	// annuler. Puis on remet la cloture en etat.
+	// / All or nothing: the 2nd entry is already there, the 1st must not be kept.
+	$cloture_a_deux_ecritures = null;
+	foreach (cloturesImportees($db) as $cloture) {
+		if (count(explode(',', $cloture->pieces)) >= 2) {
+			$cloture_a_deux_ecritures = $cloture;
+		}
+	}
+	if ($cloture_a_deux_ecritures === null) {
+		verifier(false, '6. Tout ou rien : aucune clôture importée avec deux écritures (faire une vente en caisse ET une en ligne le même jour)');
+	} else {
+		$pieces = explode(',', $cloture_a_deux_ecritures->pieces);
+		$premiere_piece = (int) $pieces[0];
+		$resql = $db->query("SELECT doc_ref FROM ".$db->prefix()."accounting_bookkeeping WHERE piece_num = ".$premiere_piece." LIMIT 1");
+		$reference_de_la_premiere = $db->fetch_object($resql)->doc_ref;
+
+		$db->query("DELETE FROM ".$db->prefix()."accounting_bookkeeping WHERE piece_num = ".$premiere_piece);
+		$db->query("DELETE FROM ".$db->prefix()."tibillet_cloture_importee WHERE rowid = ".((int) $cloture_a_deux_ecritures->rowid));
+
+		$resultat = appelerMethodePrivee($import, 'importerUneCloture', array($cloture_a_deux_ecritures->cloture_uuid, $user, null));
+		$lignes_de_la_premiere = nombreDeLignes($db, " AND doc_ref = '".$db->escape($reference_de_la_premiere)."'");
+		verifier($resultat < 0, '6. Tout ou rien : la clôture n° '.$cloture_a_deux_ecritures->numero.' est refusée ('.$import->error.')');
+		verifier($lignes_de_la_premiere === 0, '6. Tout ou rien : la première écriture ('.$reference_de_la_premiere.') n\'est pas gardée');
+
+		// Remettre en etat : retirer la seconde ecriture, puis reimporter toute la cloture.
+		// / Restore: remove the 2nd entry, then import the whole closure again.
+		foreach (array_slice($pieces, 1) as $piece) {
+			$db->query("DELETE FROM ".$db->prefix()."accounting_bookkeeping WHERE piece_num = ".((int) $piece));
+		}
+		$resultat = appelerMethodePrivee($import, 'importerUneCloture', array($cloture_a_deux_ecritures->cloture_uuid, $user, null));
+		verifier($resultat >= 0 && nombreDeLignes($db) === $lignes_avant, '6. Remise en état de la clôture n° '.$cloture_a_deux_ecritures->numero);
+	}
+
+	// 7. Mode « articles et ventes » : le module n'ecrit plus rien dans le grand livre,
+	// ni par la tache de nuit, ni par « Reimporter ». Puis on remet le mode d'avant.
+	// / "Items and sales" mode: nothing is written in the ledger any more.
+	dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_VENTES, 'chaine', 0, '', $conf->entity);
+	$lignes_avant_mode_ventes = nombreDeLignes($db);
+	$import = new ImportTiBillet($db);
+	$retour = $import->importerLesClotures();
+	verifier($retour === 0 && $import->output === $langs->transnoentities('TiBilletModeVentesRienAImporter'), '7. Mode ventes : la tâche de nuit n\'importe rien ('.$import->output.')');
+	$clotures = cloturesImportees($db);
+	$derniere = end($clotures);
+	$retour = $import->reimporterUneCloture((int) $derniere->rowid);
+	verifier($retour === -1 && $import->error === $langs->transnoentities('TiBilletModeVentesPasDeReimport'), '7. Mode ventes : « Réimporter » est refusé ('.$import->error.')');
+	verifier(nombreDeLignes($db) === $lignes_avant_mode_ventes, '7. Mode ventes : grand livre inchangé ('.nombreDeLignes($db).' lignes)');
+}
 
 // ------------------------------------------------------------------
 // 8 à 14. Le catalogue (mode « articles et ventes »), fiche 06-C
@@ -687,6 +700,24 @@ dolibarr_del_const($db, 'TIBILLET_CATALOGUE_ETAG', $conf->entity);
  * Les ventes, avec les clotures et les ventes de TiBillet imitees.
  * / Sales with faked closures and sales.
  */
+/**
+ * Des reglages dont le plan de TiBillet est imite.
+ * / Settings with a faked TiBillet chart of accounts.
+ */
+class ReglagesImites extends ReglagesTiBillet
+{
+	/** @var array Les comptes rendus par /api/v2/accounts/ / Faked accounts */
+	public $comptes_imites = array();
+
+	protected function appelerTiBillet($chemin, $en_tetes_en_plus = array())
+	{
+		if (strpos($chemin, '/api/v2/accounts/') === 0) {
+			return array('code' => 200, 'donnees' => array('results' => $this->comptes_imites), 'etag' => '');
+		}
+		return parent::appelerTiBillet($chemin, $en_tetes_en_plus);
+	}
+}
+
 class VentesImitees extends VentesTiBillet
 {
 	/** @var array Les clotures rendues par la liste / Faked closure list */
@@ -832,20 +863,43 @@ $compte_apres = $db->fetch_object($db->query("SELECT accountancy_code_sell FROM 
 $db->query("UPDATE ".$db->prefix()."c_tva SET accountancy_code_sell = '".$db->escape((string) $ligne_du_taux->accountancy_code_sell)."' WHERE rowid = ".((int) $ligne_du_taux->rowid));
 verifier($compte_apres === 'ESSAI', '22 bis. Un compte de TVA posé à la main reste ('.$compte_apres.')');
 
-// 23. Une banque par compte de tresorerie : la caisse (530) en type caisse, le
-// meme rowid au second appel.
-// / One bank per treasury account; same rowid on the second call.
-$id_caisse = $reglages->banquePourLeCompte('530000', $user);
+// 23. La banque d'un compte de tresorerie : celle du lieu, au meme numero (les zeros
+// de droite ne comptent pas) ; le meme rowid au second appel.
+// / A treasury account's bank: the venue's, same number; same rowid twice.
+$id_caisse = $reglages->banquePourLeCompte('530000');
 $banque = new Account($db);
 $banque->fetch($id_caisse);
-verifier($id_caisse > 0 && (int) $banque->type === Account::TYPE_CASH && $banque->account_number === appelerMethodePrivee($reglages, 'numeroDeCompteDolibarr', array('530000')), '23. Banque de la caisse : type caisse, compte 530000 sous la forme Dolibarr ('.$banque->account_number.')');
-verifier($reglages->banquePourLeCompte('530000', $user) === $id_caisse, '23. Second appel : la même banque');
+verifier($id_caisse > 0 && rtrim($banque->account_number, '0') === '53', '23. Banque de la caisse : compte 530000, aux zéros près ('.$banque->account_number.')');
+verifier($reglages->banquePourLeCompte('530000') === $id_caisse, '23. Second appel : la même banque');
 // 23 bis. Sans le lien enregistre, la banque qui porte deja ce compte est retrouvee,
 // pas recreee. / Without the saved link, the bank holding the account is found again.
 $banques_avant = compter($db, 'bank_account');
+$lien_d_avant = getDolGlobalString('TIBILLET_BANQUE_530000');
 dolibarr_del_const($db, 'TIBILLET_BANQUE_530000', $conf->entity);
-$id_retrouve = $reglages->banquePourLeCompte('530000', $user);
+$id_retrouve = $reglages->banquePourLeCompte('530000');
+if ($lien_d_avant !== '') {
+	dolibarr_set_const($db, 'TIBILLET_BANQUE_530000', $lien_d_avant, 'chaine', 0, '', $conf->entity);
+}
 verifier($id_retrouve === $id_caisse && compter($db, 'bank_account') === $banques_avant, '23 bis. Lien effacé : la banque du compte 53 est retrouvée, aucune banque créée');
+// 23 ter. Un compte sans banque : erreur qui le nomme, aucune banque creee.
+// / An account without bank: an error naming it, no bank created.
+$reglages_sans_banque = new ReglagesTiBillet($db);
+$id_absent = $reglages_sans_banque->banquePourLeCompte('999999');
+verifier($id_absent === -1 && strpos($reglages_sans_banque->error, '999999') !== false && compter($db, 'bank_account') === $banques_avant, '23 ter. Compte sans banque : erreur, aucune banque créée ('.$reglages_sans_banque->error.')');
+// 23 quater. La verification des trois boutons : un compte de tresorerie sans banque
+// est un manque ; un compte qui n'est pas de tresorerie n'est pas regarde.
+// / The three buttons' check: a treasury account without bank is reported.
+$reglages_imites = new ReglagesImites($db);
+$reglages_imites->comptes_imites = array(
+	array('accountNumber' => '530000', 'name' => 'Caisse', 'active' => true, 'treasury' => true),
+	array('accountNumber' => '999999', 'name' => 'Essai sans banque', 'active' => true, 'treasury' => true),
+	array('accountNumber' => '999998', 'name' => 'Essai de vente', 'active' => true, 'treasury' => false),
+);
+$retour_imite = $reglages_imites->verifierLesBanques();
+verifier($retour_imite === -1 && count($reglages_imites->manques) === 1 && strpos($reglages_imites->manques[0], '999999 « Essai sans banque »') !== false, '23 quater. Vérification : seul le compte de trésorerie sans banque manque ('.implode(' | ', $reglages_imites->manques).')');
+$reglages_imites = new ReglagesImites($db);
+$reglages_imites->comptes_imites = array(array('accountNumber' => '530000', 'name' => 'Caisse', 'active' => true, 'treasury' => true));
+verifier($reglages_imites->verifierLesBanques() === 0 && empty($reglages_imites->manques), '23 quater. Chaque compte de trésorerie a sa banque : rien ne manque');
 
 // 24. Les codes de paiement (D22) / Payment codes
 // Un code par type de monnaie, cree et actif ; le FED n'est pas VAD.
@@ -914,8 +968,9 @@ $facture_1 = factureDeLaVenteImitee($db, 1);
 $facture_1_juste = $facture_1 && (int) $facture_1->status === Facture::STATUS_CLOSED && (int) $facture_1->paye === 1
 	&& round((float) $facture_1->total_ttc, 2) === 5.0 && round((float) $facture_1->total_ht, 2) === 4.17
 	&& (int) $facture_1->socid === $id_tiers && count($facture_1->lines) === 1
-	&& (int) $facture_1->lines[0]->fk_code_ventilation === 0;
-verifier($facture_1_juste, '27. Bière en espèces : facture validée, payée, 5,00 TTC, au tiers de l\'e-mail, ligne sans lien comptable');
+	&& (int) $facture_1->lines[0]->fk_code_ventilation === 0
+	&& $facture_1->module_source === 'tibillet';
+verifier($facture_1_juste, '27. Bière en espèces : facture validée, payée, 5,00 TTC, au tiers de l\'e-mail, ligne sans lien comptable, module source tibillet');
 $paiements_1 = $facture_1 ? $facture_1->getListOfPayments() : array();
 $banque_du_paiement_1 = $facture_1 ? $db->fetch_object($db->query("SELECT b.fk_account FROM ".$db->prefix()."paiement_facture as pf JOIN ".$db->prefix()."paiement as p ON p.rowid = pf.fk_paiement JOIN ".$db->prefix()."bank as b ON b.rowid = p.fk_bank WHERE pf.fk_facture = ".((int) $facture_1->id))) : null;
 verifier(count($paiements_1) === 1 && $paiements_1[0]['type'] === 'LIQ' && $banque_du_paiement_1 && (int) $banque_du_paiement_1->fk_account === $id_caisse, '27. Un paiement LIQ, en banque sur la caisse');
@@ -929,7 +984,7 @@ verifier($ligne_3 && $ligne_3->fk_facture === null && factureDeLaVenteImitee($db
 
 $avoir_4 = factureDeLaVenteImitee($db, 4);
 $avoir_5 = factureDeLaVenteImitee($db, 5);
-verifier($avoir_4 && (int) $avoir_4->type === Facture::TYPE_CREDIT_NOTE && (int) $avoir_4->fk_facture_source === (int) $facture_1->id && round((float) $avoir_4->total_ttc, 2) === -5.0, '30. Avoir : relié à la facture de la vente d\'origine, -5,00');
+verifier($avoir_4 && (int) $avoir_4->type === Facture::TYPE_CREDIT_NOTE && (int) $avoir_4->fk_facture_source === (int) $facture_1->id && round((float) $avoir_4->total_ttc, 2) === -5.0 && $avoir_4->module_source === 'tibillet', '30. Avoir : relié à la facture de la vente d\'origine, -5,00, module source tibillet');
 verifier($avoir_5 && (int) $avoir_5->type === Facture::TYPE_CREDIT_NOTE && empty($avoir_5->fk_facture_source), '30 bis. Avoir d\'une vente jamais importée : un avoir seul');
 
 $ligne_divers = $db->fetch_object($db->query("SELECT v.accountancy_code, v.sens, v.amount, ba.account_number FROM ".$db->prefix()."payment_various as v JOIN ".$db->prefix()."bank as b ON b.rowid = v.fk_bank JOIN ".$db->prefix()."bank_account as ba ON ba.rowid = b.fk_account WHERE v.label = '".$db->escape('Essai recharge offerte '.$numero_de_cloture)."'"));
@@ -1037,12 +1092,14 @@ $ventes_e = array(
 list($retour, $import) = passageDesVentes($db, array($cloture_e), array($cloture_e['uuid'] => $ventes_e));
 $facture_51 = factureDeLaVenteImitee($db, 51);
 verifier(!isModEnabled('accounting') && $retour === 0 && $facture_51 && (int) $facture_51->paye === 1 && round((float) $facture_51->total_ttc, 2) === 5.0, '38. Comptabilité éteinte : la vente arrive en facture payée ('.str_replace("\n", ' | ', $import->output).($import->error ? ' / '.$import->error : '').')');
-dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_ECRITURES, 'chaine', 0, '', $conf->entity);
-$import_ecritures = new ImportTiBillet($db);
-$lignes_du_grand_livre_avant = nombreDeLignes($db);
-$retour = $import_ecritures->importerLesClotures();
-verifier($retour === -1 && $import_ecritures->error === $langs->transnoentities('TiBilletComptabiliteInactive') && nombreDeLignes($db) === $lignes_du_grand_livre_avant, '38. Comptabilité éteinte : le mode écritures refuse et le dit ('.$import_ecritures->error.')');
-dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_VENTES, 'chaine', 0, '', $conf->entity);
+if ($avec_les_ecritures) {
+	dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_ECRITURES, 'chaine', 0, '', $conf->entity);
+	$import_ecritures = new ImportTiBillet($db);
+	$lignes_du_grand_livre_avant = nombreDeLignes($db);
+	$retour = $import_ecritures->importerLesClotures();
+	verifier($retour === -1 && $import_ecritures->error === $langs->transnoentities('TiBilletComptabiliteInactive') && nombreDeLignes($db) === $lignes_du_grand_livre_avant, '38. Comptabilité éteinte : le mode écritures refuse et le dit ('.$import_ecritures->error.')');
+	dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_VENTES, 'chaine', 0, '', $conf->entity);
+}
 if ($module_comptable_avant !== null) {
 	$conf->modules['accounting'] = $module_comptable_avant;
 }
@@ -1050,13 +1107,15 @@ if ($module_comptable_avant !== null) {
 // 35. « Reimporter » une cloture importee en mode ventes : refuse, meme en mode
 // ecritures (sinon ses ecritures s'ajouteraient a ses factures).
 // / Re-importing a closure imported in sales mode: refused.
-dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_ECRITURES, 'chaine', 0, '', $conf->entity);
-$ligne_de_la_cloture_a = $db->fetch_object($db->query("SELECT rowid FROM ".$db->prefix()."tibillet_cloture_importee WHERE cloture_uuid = '".$db->escape($cloture_a['uuid'])."'"));
-$lignes_du_grand_livre_avant = nombreDeLignes($db);
-$import_ecritures = new ImportTiBillet($db);
-$retour = $ligne_de_la_cloture_a ? $import_ecritures->reimporterUneCloture((int) $ligne_de_la_cloture_a->rowid) : 0;
-verifier($retour === -1 && $import_ecritures->error === $langs->transnoentities('TiBilletClotureEnModeVentes') && nombreDeLignes($db) === $lignes_du_grand_livre_avant, '35. Réimporter une clôture importée en mode ventes : refusé, grand livre inchangé ('.$import_ecritures->error.')');
-dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_VENTES, 'chaine', 0, '', $conf->entity);
+if ($avec_les_ecritures) {
+	dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_ECRITURES, 'chaine', 0, '', $conf->entity);
+	$ligne_de_la_cloture_a = $db->fetch_object($db->query("SELECT rowid FROM ".$db->prefix()."tibillet_cloture_importee WHERE cloture_uuid = '".$db->escape($cloture_a['uuid'])."'"));
+	$lignes_du_grand_livre_avant = nombreDeLignes($db);
+	$import_ecritures = new ImportTiBillet($db);
+	$retour = $ligne_de_la_cloture_a ? $import_ecritures->reimporterUneCloture((int) $ligne_de_la_cloture_a->rowid) : 0;
+	verifier($retour === -1 && $import_ecritures->error === $langs->transnoentities('TiBilletClotureEnModeVentes') && nombreDeLignes($db) === $lignes_du_grand_livre_avant, '35. Réimporter une clôture importée en mode ventes : refusé, grand livre inchangé ('.$import_ecritures->error.')');
+	dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_VENTES, 'chaine', 0, '', $conf->entity);
+}
 
 // 36. Le test de connexion, en mode ventes, dit quand la cle n'a pas le droit
 // « Ventes » (TiBillet verifie le droit avant de chercher la cloture : un uuid nul
@@ -1085,34 +1144,36 @@ verifier($connexion_reussie, '36. Avec le droit « Ventes » (404 sur un uuid nu
 // 35 bis. Une cloture dont une partie des ventes est deja en factures (passage coupe
 // par une vente refusee) ne s'importe jamais en ecritures : double compta.
 // / A closure partly copied as invoices is never imported as entries.
-$cloture_en_partie = identifiantDuPassage(7777);
-$db->query("INSERT INTO ".$db->prefix()."tibillet_vente_importee (entity, vente_uuid, numero_vente, cloture_uuid, fk_facture, date_import) VALUES (".((int) $conf->entity).", '".$db->escape(identifiantDuPassage(7778))."', 1, '".$db->escape($cloture_en_partie)."', NULL, '".$db->idate(dol_now())."')");
-$import_ecritures = new ImportTiBillet($db);
-$lignes_du_grand_livre_avant = nombreDeLignes($db);
-$retour = appelerMethodePrivee($import_ecritures, 'importerUneCloture', array($cloture_en_partie, $user, null));
-verifier($retour === -1 && $import_ecritures->error === $langs->transnoentities('TiBilletClotureEnPartieEnVentes') && nombreDeLignes($db) === $lignes_du_grand_livre_avant, '35 bis. Clôture en partie en factures : jamais importée en écritures ('.$import_ecritures->error.')');
+if ($avec_les_ecritures) {
+	$cloture_en_partie = identifiantDuPassage(7777);
+	$db->query("INSERT INTO ".$db->prefix()."tibillet_vente_importee (entity, vente_uuid, numero_vente, cloture_uuid, fk_facture, date_import) VALUES (".((int) $conf->entity).", '".$db->escape(identifiantDuPassage(7778))."', 1, '".$db->escape($cloture_en_partie)."', NULL, '".$db->idate(dol_now())."')");
+	$import_ecritures = new ImportTiBillet($db);
+	$lignes_du_grand_livre_avant = nombreDeLignes($db);
+	$retour = appelerMethodePrivee($import_ecritures, 'importerUneCloture', array($cloture_en_partie, $user, null));
+	verifier($retour === -1 && $import_ecritures->error === $langs->transnoentities('TiBilletClotureEnPartieEnVentes') && nombreDeLignes($db) === $lignes_du_grand_livre_avant, '35 bis. Clôture en partie en factures : jamais importée en écritures ('.$import_ecritures->error.')');
 
-// 37. Le mode par defaut : « articles et ventes » pour une installation neuve, mais
-// « ecritures » si des clotures sont deja dans le grand livre (un lieu qui utilise le
-// mode ecritures ne bascule jamais en silence). Un mode enregistre fait toujours foi.
-// / Default mode: sales for a new install, entries if closures are already imported.
-verifier(ImportTiBillet::modeParDefaut(0) === ImportTiBillet::MODE_VENTES && ImportTiBillet::modeParDefaut(3) === ImportTiBillet::MODE_ECRITURES, '37. Mode par défaut : ventes sans clôture importée, écritures sinon');
-$mode_enregistre = getDolGlobalString('TIBILLET_MODE');
-dolibarr_del_const($db, 'TIBILLET_MODE', $conf->entity);
-$mode_sans_reglage = ImportTiBillet::modeChoisi();
-dolibarr_set_const($db, 'TIBILLET_MODE', $mode_enregistre, 'chaine', 0, '', $conf->entity);
-verifier($mode_sans_reglage === ImportTiBillet::MODE_ECRITURES, '37. Sans mode enregistré, avec des clôtures déjà importées : écritures ('.$mode_sans_reglage.')');
-// Seulement des clotures en mode ventes (les clotures en ecritures masquees le temps
-// de l'essai, puis remises) : le mode par defaut reste « ventes ».
-// / Only sales-mode closures: the default mode stays sales.
-$db->query("UPDATE ".$db->prefix()."tibillet_cloture_importee SET mode = 'essai37' WHERE mode = 'ecritures'");
-dolibarr_del_const($db, 'TIBILLET_MODE', $conf->entity);
-$mode_avec_des_ventes_seulement = ImportTiBillet::modeChoisi();
-dolibarr_set_const($db, 'TIBILLET_MODE', $mode_enregistre, 'chaine', 0, '', $conf->entity);
-$db->query("UPDATE ".$db->prefix()."tibillet_cloture_importee SET mode = 'ecritures' WHERE mode = 'essai37'");
-verifier($mode_avec_des_ventes_seulement === ImportTiBillet::MODE_VENTES, '37. Des clôtures importées en ventes seulement : le mode par défaut reste ventes ('.$mode_avec_des_ventes_seulement.')');
-$import_compte = new ImportTiBillet($db);
-verifier($import_compte->nombreDeCloturesImportees(ImportTiBillet::MODE_ECRITURES) === compter($db, 'tibillet_cloture_importee', "mode = 'ecritures'") && $import_compte->nombreDeCloturesImportees(ImportTiBillet::MODE_ECRITURES) < $import_compte->nombreDeCloturesImportees(), '37. Le mode par défaut ne compte que les clôtures du grand livre, pas celles importées en ventes');
+	// 37. Le mode par defaut : « articles et ventes » pour une installation neuve, mais
+	// « ecritures » si des clotures sont deja dans le grand livre (un lieu qui utilise le
+	// mode ecritures ne bascule jamais en silence). Un mode enregistre fait toujours foi.
+	// / Default mode: sales for a new install, entries if closures are already imported.
+	verifier(ImportTiBillet::modeParDefaut(0) === ImportTiBillet::MODE_VENTES && ImportTiBillet::modeParDefaut(3) === ImportTiBillet::MODE_ECRITURES, '37. Mode par défaut : ventes sans clôture importée, écritures sinon');
+	$mode_enregistre = getDolGlobalString('TIBILLET_MODE');
+	dolibarr_del_const($db, 'TIBILLET_MODE', $conf->entity);
+	$mode_sans_reglage = ImportTiBillet::modeChoisi();
+	dolibarr_set_const($db, 'TIBILLET_MODE', $mode_enregistre, 'chaine', 0, '', $conf->entity);
+	verifier($mode_sans_reglage === ImportTiBillet::MODE_ECRITURES, '37. Sans mode enregistré, avec des clôtures déjà importées : écritures ('.$mode_sans_reglage.')');
+	// Seulement des clotures en mode ventes (les clotures en ecritures masquees le temps
+	// de l'essai, puis remises) : le mode par defaut reste « ventes ».
+	// / Only sales-mode closures: the default mode stays sales.
+	$db->query("UPDATE ".$db->prefix()."tibillet_cloture_importee SET mode = 'essai37' WHERE mode = 'ecritures'");
+	dolibarr_del_const($db, 'TIBILLET_MODE', $conf->entity);
+	$mode_avec_des_ventes_seulement = ImportTiBillet::modeChoisi();
+	dolibarr_set_const($db, 'TIBILLET_MODE', $mode_enregistre, 'chaine', 0, '', $conf->entity);
+	$db->query("UPDATE ".$db->prefix()."tibillet_cloture_importee SET mode = 'ecritures' WHERE mode = 'essai37'");
+	verifier($mode_avec_des_ventes_seulement === ImportTiBillet::MODE_VENTES, '37. Des clôtures importées en ventes seulement : le mode par défaut reste ventes ('.$mode_avec_des_ventes_seulement.')');
+	$import_compte = new ImportTiBillet($db);
+	verifier($import_compte->nombreDeCloturesImportees(ImportTiBillet::MODE_ECRITURES) === compter($db, 'tibillet_cloture_importee', "mode = 'ecritures'") && $import_compte->nombreDeCloturesImportees(ImportTiBillet::MODE_ECRITURES) < $import_compte->nombreDeCloturesImportees(), '37. Le mode par défaut ne compte que les clôtures du grand livre, pas celles importées en ventes');
+}
 
 // Menage : les clotures et ventes imitees sortent des tables du module (sinon le
 // curseur des vraies clotures sauterait).
@@ -1121,10 +1182,12 @@ $db->query("DELETE FROM ".$db->prefix()."tibillet_vente_importee WHERE vente_uui
 $db->query("DELETE FROM ".$db->prefix()."tibillet_cloture_importee WHERE cloture_uuid LIKE '%".$db->escape(substr(FIN_IMITEE, 5))."'");
 
 // 12. Mode « ecritures » : la synchro ne fait rien / Entries mode: no sync
-dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_ECRITURES, 'chaine', 0, '', $conf->entity);
-$produits_avant = compter($db, 'product');
-list($retour, $catalogue) = synchroniserSansEtag($db);
-verifier($retour === 0 && $catalogue->output === $langs->transnoentities('TiBilletModeEcrituresPasDeCatalogue') && compter($db, 'product') === $produits_avant, '12. Mode écritures : la synchro ne fait rien');
+if ($avec_les_ecritures) {
+	dolibarr_set_const($db, 'TIBILLET_MODE', ImportTiBillet::MODE_ECRITURES, 'chaine', 0, '', $conf->entity);
+	$produits_avant = compter($db, 'product');
+	list($retour, $catalogue) = synchroniserSansEtag($db);
+	verifier($retour === 0 && $catalogue->output === $langs->transnoentities('TiBilletModeEcrituresPasDeCatalogue') && compter($db, 'product') === $produits_avant, '12. Mode écritures : la synchro ne fait rien');
+}
 
 // 14. L'heure de la tache de nuit / The nightly job time
 $heure_d_avant = getDolGlobalString('TIBILLET_HEURE');

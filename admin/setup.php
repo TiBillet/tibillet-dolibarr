@@ -178,8 +178,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 			}
 			$numero_tibillet = $morceaux[1];
 			$id_de_la_banque = GETPOSTINT($nom_du_champ);
+			// « A relier » : plus de choix, la banque du meme numero sera retenue.
+			// / "To link": no choice, the bank with the same number is used.
+			if ($id_de_la_banque <= 0) {
+				dolibarr_del_const($db, 'TIBILLET_BANQUE_'.$numero_tibillet, $conf->entity);
+				continue;
+			}
 			$banque = new Account($db);
-			if ($id_de_la_banque <= 0 || $banque->fetch($id_de_la_banque) <= 0) {
+			if ($banque->fetch($id_de_la_banque) <= 0) {
 				continue;
 			}
 			if ((int) $banque->type === Account::TYPE_CASH && strpos($numero_tibillet, '53') !== 0) {
@@ -330,38 +336,48 @@ if ($mode_actuel === ImportTiBillet::MODE_VENTES) {
 	print '</td></tr></table><br>';
 
 	// Les banques de chaque compte de tresorerie et le client de passage. Une ligne par
-	// compte deja vu (le module cree la banque au premier paiement).
-	// / The bank of each treasury account seen so far, and the walk-in customer.
+	// compte de tresorerie de TiBillet, avec son libelle ; la banque proposee est celle
+	// que le module retient (choisie, ou du meme numero). Le module n'en cree aucune.
+	// / The bank of each TiBillet treasury account, and the walk-in customer.
 	print load_fiche_titre($langs->trans('TiBilletBanques'), '', '');
 	print '<div class="opacitymedium">'.$langs->trans('TiBilletBanquesAide').'</div>';
 	print '<form method="POST" action="'.$adresse_de_la_page.'">';
 	print '<input type="hidden" name="token" value="'.newToken().'">';
 	print '<input type="hidden" name="action" value="banques">';
 	print '<table class="noborder centpercent">';
-	print '<tr class="liste_titre"><td>'.$langs->trans('TiBilletCompteTiBillet').'</td><td>'.$langs->trans('TiBilletBanqueDolibarr').'</td></tr>';
+	print '<tr class="liste_titre"><td>'.$langs->trans('TiBilletCompteTiBillet').'</td><td>'.$langs->trans('TiBilletLibelleTiBillet').'</td><td>'.$langs->trans('TiBilletBanqueDolibarr').'</td></tr>';
 	$banques_ouvertes = array();
 	$resql_banques = $db->query("SELECT rowid, label, courant FROM ".$db->prefix()."bank_account WHERE clos = 0 AND entity IN (".getEntity('bank_account').") ORDER BY label");
 	while ($resql_banques && ($banque_ouverte = $db->fetch_object($resql_banques))) {
 		$banques_ouvertes[(int) $banque_ouverte->rowid] = $banque_ouverte->label.((int) $banque_ouverte->courant === Account::TYPE_CASH ? ' ('.$langs->trans('TiBilletCaisse').')' : '');
 	}
-	$resql_liens = $db->query("SELECT name, value FROM ".$db->prefix()."const WHERE name LIKE 'TIBILLET\\_BANQUE\\_%' AND entity = ".((int) $conf->entity)." ORDER BY name");
-	$nombre_de_liens = 0;
-	while ($resql_liens && ($lien = $db->fetch_object($resql_liens))) {
-		$nombre_de_liens++;
-		$numero_tibillet = substr($lien->name, strlen('TIBILLET_BANQUE_'));
-		print '<tr class="oddeven"><td>'.dol_escape_htmltag($numero_tibillet).'</td><td>';
-		print '<select name="banque_'.dol_escape_htmltag($numero_tibillet).'" class="minwidth300">';
-		foreach ($banques_ouvertes as $id_banque => $libelle_banque) {
-			$choisie = ((int) $lien->value === $id_banque) ? ' selected' : '';
-			print '<option value="'.$id_banque.'"'.$choisie.'>'.dol_escape_htmltag($libelle_banque).'</option>';
+	dol_include_once('/tibillet/class/reglages.class.php');
+	$reglages_des_banques = new ReglagesTiBillet($db);
+	$comptes_de_tresorerie = $reglages_des_banques->comptesDeTresorerie();
+	if ($comptes_de_tresorerie === null) {
+		print '<tr class="oddeven"><td colspan="3"><span class="error">'.dol_escape_htmltag($reglages_des_banques->error).'</span></td></tr>';
+	} elseif (empty($comptes_de_tresorerie)) {
+		print '<tr class="oddeven"><td colspan="3"><span class="opacitymedium">'.$langs->trans('TiBilletAucuneBanque').'</span></td></tr>';
+	} else {
+		foreach ($comptes_de_tresorerie as $numero_tibillet => $libelle_tibillet) {
+			$id_retenu = $reglages_des_banques->banquePourLeCompte($numero_tibillet);
+			$champ_du_compte = 'banque_'.preg_replace('/[^0-9A-Za-z]/', '', $numero_tibillet);
+			print '<tr class="oddeven"><td>'.dol_escape_htmltag($numero_tibillet).'</td><td>'.dol_escape_htmltag($libelle_tibillet).'</td><td>';
+			print '<select name="'.$champ_du_compte.'" class="minwidth300">';
+			print '<option value="0">'.$langs->trans('TiBilletBanqueARelier').'</option>';
+			foreach ($banques_ouvertes as $id_banque => $libelle_banque) {
+				$choisie = ($id_retenu === $id_banque) ? ' selected' : '';
+				print '<option value="'.$id_banque.'"'.$choisie.'>'.dol_escape_htmltag($libelle_banque).'</option>';
+			}
+			print '</select>';
+			if ($id_retenu <= 0) {
+				print ' '.img_warning($langs->trans('TiBilletBanqueARelier'));
+			}
+			print '</td></tr>';
 		}
-		print '</select></td></tr>';
-	}
-	if ($nombre_de_liens === 0) {
-		print '<tr class="oddeven"><td colspan="2"><span class="opacitymedium">'.$langs->trans('TiBilletAucuneBanque').'</span></td></tr>';
 	}
 	$formulaire = new Form($db);
-	print '<tr class="oddeven"><td>'.$langs->trans('TiBilletClientDePassageChoisi').'</td><td>';
+	print '<tr class="oddeven"><td colspan="2">'.$langs->trans('TiBilletClientDePassageChoisi').'</td><td>';
 	print $formulaire->select_company(getDolGlobalInt('TIBILLET_TIERS_DE_PASSAGE'), 'tiers_de_passage', '(s.client:IN:1,3)', 0, 0, 0, array(), 0, 'minwidth300');
 	print '</td></tr>';
 	print '</table>';

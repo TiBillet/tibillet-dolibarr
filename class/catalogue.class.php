@@ -21,7 +21,8 @@
  *
  * UN PASSAGE (la tache de nuit, ou le bouton « Synchroniser le catalogue maintenant ») :
  * 1. ne fait rien en mode « ecritures », ni sans adresse ou sans cle (et le dit) ;
- * 2. echoue si les modules Produits, Services ou Categories sont inactifs ;
+ * 2. echoue si les modules Produits, Services ou Categories sont inactifs, ou si un
+ *    compte de tresorerie de TiBillet n'a pas sa banque (ReglagesTiBillet) ;
  * 3. lit TOUT le catalogue : GET /api/v2/products/?accounting=true, avec l'ETag du
  *    dernier passage reussi dans If-None-Match. 304 = rien n'a change : fin ;
  * 4. range les categories sous deux meres : « Caisse TiBillet » (une fille par
@@ -45,6 +46,7 @@ require_once DOL_DOCUMENT_ROOT.'/product/class/product.class.php';
 require_once DOL_DOCUMENT_ROOT.'/categories/class/categorie.class.php';
 require_once DOL_DOCUMENT_ROOT.'/core/lib/admin.lib.php';
 dol_include_once('/tibillet/class/importtibillet.class.php');
+dol_include_once('/tibillet/class/reglages.class.php');
 
 /**
  * La synchro du catalogue. Herite de l'import : meme appel a TiBillet, meme forme
@@ -99,6 +101,14 @@ class CatalogueTiBillet extends ImportTiBillet
 		}
 		if (!isModEnabled('product') || !isModEnabled('service') || !isModEnabled('category')) {
 			$this->error = $langs->transnoentities('TiBilletModulesProduitsInactifs');
+			return -1;
+		}
+
+		// 0. Chaque compte de tresorerie de TiBillet a sa banque : sinon, rien ne bouge.
+		// / Each TiBillet treasury account has its bank, or nothing moves.
+		$reglages = new ReglagesTiBillet($this->db);
+		if ($reglages->verifierLesBanques() < 0) {
+			$this->error = $langs->transnoentities('TiBilletBanquesManquantesCatalogue', implode(' ; ', $reglages->manques));
 			return -1;
 		}
 
